@@ -1,0 +1,4443 @@
+{
+  "datasets": [
+    {
+      "name": "4d7ed134",
+      "displayName": "sankey - Geral",
+      "queryLines": [
+        "with\r\n",
+        "attempt as (\r\n",
+        "  select\r\n",
+        "    ar_code\r\n",
+        "  , min (attempt_1_date) as first_attempt_date\r\n",
+        "  from card_operations.tracking_card_delivery\r\n",
+        "  where attempt_1_date is not null\r\n",
+        "  group by all\r\n",
+        "),\r\n",
+        "\r\n",
+        "tracking_card_delivery as (\r\n",
+        "  select\r\n",
+        "      a.*\r\n",
+        "    , b.first_attempt_date\r\n",
+        "  from card_operations.tracking_card_delivery as a\r\n",
+        "  left join attempt as b\r\n",
+        "    using (ar_code)\r\n",
+        "  qualify row_number() over (partition by ar_code order by last_status_at desc) = 1\r\n",
+        ")\r\n",
+        "\r\n",
+        "select\r\n",
+        "    case\r\n",
+        "      when :date_view = 'Dia'       then date_format(view_ref_date, 'yyyy-MM-dd')\r\n",
+        "      when :date_view = 'Semana'    then date(date_trunc('week', view_ref_date))\r\n",
+        "      when :date_view = 'Mês'       then date(date_trunc('month', view_ref_date))\r\n",
+        "      when :date_view = 'Trimestre' then date(date_trunc('quarter', view_ref_date))\r\n",
+        "    end as view_ref_date\r\n",
+        "    , embossing_company\r\n",
+        "    , delivery_product\r\n",
+        "    , 'Geral' as `Geral`\r\n",
+        "    , case\r\n",
+        "        when funnel_status_embossing =  '1. Não processado FIS' then 'FIS - NOK'\r\n",
+        "        when funnel_status_embossing <> '1. Não processado FIS' then 'FIS - OK'\r\n",
+        "        end as funnel_status_fis\r\n",
+        "    , case\r\n",
+        "        when funnel_status_embossing not in ('1. Não processado FIS', '5. Expedido') then 'Embossadora - NOK'\r\n",
+        "        when funnel_status_embossing = '5. Expedido' then 'Embossadora - OK'\r\n",
+        "        end as funnel_status_embossing\r\n",
+        "    , case\r\n",
+        "        when (funnel_status_embossing = '5. Expedido' and funnel_status_delivery <> '1. Pendente postagem') \r\n",
+        "          and a.custody_start_date is not null and first_attempt_date is null\r\n",
+        "            or a.custody_start_date < first_attempt_date then 'Custódia direto'\r\n",
+        "        when funnel_status_embossing = '5. Expedido' and funnel_status_delivery <> '1. Pendente postagem' then 'Postagem - OK'\r\n",
+        "        when funnel_status_embossing = '5. Expedido' and funnel_status_delivery = '1. Pendente postagem'  then 'Postagem - NOK'\r\n",
+        "        end as funnel_status_postagem\r\n",
+        "    , case\r\n",
+        "        when funnel_status_embossing <> '1. Não processado FIS' and funnel_status_delivery = '8. Enviado via Correios' and delivery_product = 'Correios' then 'Correios'\r\n",
+        "        when funnel_status_embossing <> '1. Não processado FIS' and funnel_status_delivery in ('6. Fragmentado', '7. Sinistrado') then 'Frag/Sinist'\r\n",
+        "        when funnel_status_embossing <> '1. Não processado FIS' and funnel_status_delivery in ('4. Entregue') then 'Entregue'\r\n",
+        "        when funnel_status_embossing <> '1. Não processado FIS' and funnel_status_delivery in ('5. Custódia') then 'Custódia'\r\n",
+        "        when funnel_status_embossing <> '1. Não processado FIS' and funnel_status_delivery not in ('8. Enviado via Correios', '6. Fragmentado', '7. Sinistrado', '4. Entregue', '5. Custódia') then 'Em andamento'\r\n",
+        "        end as funnel_courier\r\n",
+        "    , embossing_status\r\n",
+        "    , funnel_status_delivery\r\n",
+        "    , status_delivery\r\n",
+        "    , count(distinct coalesce(account_number, cpf)) as qtd\r\n",
+        "\r\n",
+        "from (select\r\n",
+        "        case\r\n",
+        "            when :p_view_ref = 'Expedição' then embossing_expedition_date\r\n",
+        "            when :p_view_ref = 'Cliente'   then date(card_acquired_at)\r\n",
+        "            when :p_view_ref = 'FIS'       then fis_reference_date\r\n",
+        "        end as view_ref_date\r\n",
+        "        , *\r\n",
+        "        from self_service_analytics.logistics_tracking ) a\r\n",
+        "left join tracking_card_delivery b \r\n",
+        "  on a.fis_ar_code = b.ar_code\r\n",
+        "\r\n",
+        "where 1=1\r\n",
+        "  and view_ref_date between date(:p_date_range.min) and date(:p_date_range.max)\r\n",
+        "group by all"
+      ],
+      "parameters": [
+        {
+          "displayName": "date_view",
+          "keyword": "date_view",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Mês"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "p_date_range",
+          "keyword": "p_date_range",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-60d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        },
+        {
+          "displayName": "p_view_ref",
+          "keyword": "p_view_ref",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Cliente"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3c155698",
+      "displayName": "🔸 agg - Custódia direta",
+      "queryLines": [
+        "-- 011122\r\n",
+        "with\r\n",
+        "attempt as (\r\n",
+        "  select\r\n",
+        "    ar_code\r\n",
+        "  , min (attempt_1_date) as first_attempt_date\r\n",
+        "  from card_operations.tracking_card_delivery\r\n",
+        "  where attempt_1_date is not null\r\n",
+        "  group by all\r\n",
+        "),\r\n",
+        "\r\n",
+        "tracking_card_delivery as (\r\n",
+        "  select\r\n",
+        "      a.*\r\n",
+        "    , b.first_attempt_date\r\n",
+        "  from card_operations.tracking_card_delivery as a\r\n",
+        "  left join attempt as b\r\n",
+        "    using (ar_code)\r\n",
+        "  qualify row_number() over (partition by ar_code order by last_status_at desc) = 1\r\n",
+        "),\r\n",
+        "\r\n",
+        "base as (\r\n",
+        "select\r\n",
+        "    case when :date_view = 'Mês' then date(date_trunc('month', view_ref_date)) end as view_ref_date\r\n",
+        "    , 'Vendas' as geral\r\n",
+        "    , count(distinct case when funnel_status_embossing = '1. Não processado FIS'  then coalesce(account_number, cpf) end) as fis_nok\r\n",
+        "    , count(distinct case when funnel_status_embossing <> '1. Não processado FIS' then fis_ar_code end) as fis_ok\r\n",
+        "\r\n",
+        "    , count(distinct case when funnel_status_embossing not in ('1. Não processado FIS', '5. Expedido') then fis_ar_code end) as emb_nok\r\n",
+        "    , count(distinct case when funnel_status_embossing = '5. Expedido' then fis_ar_code end) as emb_ok\r\n",
+        "\r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is null)\r\n",
+        "                            or a.custody_start_date < first_attempt_date) then fis_ar_code end) as cust_direto\r\n",
+        "\r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is null)\r\n",
+        "                          or a.custody_start_date < first_attempt_date)\r\n",
+        "                          and funnel_status_delivery in ('6. Fragmentado', '7. Sinistrado') then fis_ar_code end) as cust_finalizado\r\n",
+        "\r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is null)\r\n",
+        "                          or a.custody_start_date < first_attempt_date)\r\n",
+        "                          and funnel_status_delivery in ('4. Entregue') then fis_ar_code end) as cust_entregue\r\n",
+        "\r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is null)\r\n",
+        "                          or a.custody_start_date < first_attempt_date)\r\n",
+        "                          and funnel_status_delivery in ('5. Custódia') then fis_ar_code end) as cust_custodia\r\n",
+        "                            \r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is null)\r\n",
+        "                          or a.custody_start_date < first_attempt_date)\r\n",
+        "                          and funnel_status_delivery not in ('6. Fragmentado', '7. Sinistrado', '4. Entregue') then fis_ar_code end) as cust_em_rota\r\n",
+        "\r\n",
+        "    , count(distinct case when funnel_status_delivery in ('6. Fragmentado', '7. Sinistrado') then  fis_ar_code end) as qtde_finalizado\r\n",
+        "    , count(distinct case when funnel_status_delivery in ('4. Entregue') then  fis_ar_code end) as qtde_entregue\r\n",
+        "    , count(distinct case when funnel_status_delivery in ('5. Custódia') then  fis_ar_code end) as qtde_custodia\r\n",
+        "    , count(distinct case when funnel_status_delivery not in ('6. Fragmentado', '7. Sinistrado', '4. Entregue', '5. Custódia') then  fis_ar_code end) as qtde_em_rota\r\n",
+        "    , count(distinct fis_ar_code) as qtde_total\r\n",
+        "\r\n",
+        "from (select\r\n",
+        "        case\r\n",
+        "            when :p_view_ref = 'Expedição' then date_format(embossing_expedition_date, 'yyyy-MM')\r\n",
+        "            when :p_view_ref = 'Cliente'   then date_format(date(card_acquired_at), 'yyyy-MM')\r\n",
+        "            when :p_view_ref = 'FIS'       then date_format(fis_reference_date, 'yyyy-MM')\r\n",
+        "        end as view_ref_date\r\n",
+        "        , *\r\n",
+        "        from self_service_analytics.logistics_tracking ) a\r\n",
+        "left join tracking_card_delivery b \r\n",
+        "  on a.fis_ar_code = b.ar_code\r\n",
+        "\r\n",
+        "where 1=1\r\n",
+        "  and view_ref_date between date(:p_date_range.min) and date(:p_date_range.max)\r\n",
+        "  and segment_base in ('PicPay PF', 'Original PF')\r\n",
+        "  and delivery_product not in ('Correios')\r\n",
+        "  and case when array_contains(:p_issue_reason_name, 'Todos') then 1=1 else array_contains(:p_issue_reason_name, issue_reason_name) end\r\n",
+        "  and case when array_contains(:p_card_variant, 'Todos') then 1=1 else array_contains(:p_card_variant, variant) end\r\n",
+        "  and case when array_contains(:delivery_product, 'Todos') then 1=1 else array_contains(:delivery_product, delivery_product) end\r\n",
+        "group by all\r\n",
+        "),\r\n",
+        "\r\n",
+        "base_pct as (\r\n",
+        "  select\r\n",
+        "    *\r\n",
+        "    , if(fis_nok = 0, null, fis_nok)         / qtde_total * 100 as pct_fis_nok\r\n",
+        "    , if(fis_ok = 0, null, fis_ok)           / qtde_total * 100 as pct_fis_ok\r\n",
+        "\r\n",
+        "    , if(emb_nok = 0, null, emb_nok)         / qtde_total * 100 as pct_emb_nok\r\n",
+        "    , if(emb_ok = 0, null, emb_ok)           / qtde_total * 100 as pct_emb_ok\r\n",
+        "\r\n",
+        "    , if(cust_direto = 0, null, cust_direto) / qtde_total * 100 as pct_cust_direto\r\n",
+        "    \r\n",
+        "    , if(cust_finalizado = 0, null, cust_finalizado) / cust_direto * 100 as pct_cust_finalizado\r\n",
+        "    , if(cust_entregue = 0, null, cust_entregue)     / cust_direto * 100 as pct_cust_entregue\r\n",
+        "    , if(cust_custodia = 0, null, cust_custodia)     / cust_direto * 100 as pct_cust_custodia\r\n",
+        "    , if(cust_em_rota = 0, null, cust_em_rota)       / cust_direto * 100 as pct_cust_em_rota\r\n",
+        "\r\n",
+        "    , if(cust_finalizado = 0, null, cust_finalizado) / qtde_total * 100 as pct_qtde_finalizado\r\n",
+        "    , if(cust_entregue = 0, null, cust_entregue)     / qtde_total * 100 as pct_qtde_entregue\r\n",
+        "    , if(qtde_custodia = 0, null, qtde_custodia)     / qtde_total * 100 as pct_qtde_custodia\r\n",
+        "    , if(qtde_em_rota = 0, null, qtde_em_rota)       / qtde_total * 100 as pct_qtde_em_rota\r\n",
+        "  from base\r\n",
+        ")\r\n",
+        "\r\n",
+        "select\r\n",
+        "  *\r\n",
+        "  , pct_fis_nok as pct_fis_nok1\r\n",
+        "  , pct_emb_nok + pct_fis_nok as pct_emb_nok1_1\r\n",
+        "from base_pct\r\n",
+        "order by 1"
+      ],
+      "parameters": [
+        {
+          "displayName": "date_view",
+          "keyword": "date_view",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Mês"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "p_view_ref",
+          "keyword": "p_view_ref",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Cliente"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "p_date_range",
+          "keyword": "p_date_range",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-90d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        },
+        {
+          "displayName": "p_issue_reason_name",
+          "keyword": "p_issue_reason_name",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Todos"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "p_card_variant",
+          "keyword": "p_card_variant",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Todos"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "delivery_product",
+          "keyword": "delivery_product",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Todos"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "c53ce5de",
+      "displayName": "🔸 anl - Custódia direta",
+      "queryLines": [
+        "with\r\n",
+        "attempt as (\r\n",
+        "  select\r\n",
+        "    ar_code\r\n",
+        "  , min (attempt_1_date) as first_attempt_date\r\n",
+        "  from card_operations.tracking_card_delivery\r\n",
+        "  where attempt_1_date is not null\r\n",
+        "  group by all\r\n",
+        "),\r\n",
+        "\r\n",
+        "tracking_card_delivery as (\r\n",
+        "  select\r\n",
+        "      a.*\r\n",
+        "    , b.first_attempt_date\r\n",
+        "  from card_operations.tracking_card_delivery as a\r\n",
+        "  left join attempt as b\r\n",
+        "    using (ar_code)\r\n",
+        "  qualify row_number() over (partition by ar_code order by last_status_at desc) = 1\r\n",
+        "),\r\n",
+        "\r\n",
+        "base as (\r\n",
+        "select\r\n",
+        "    case when :date_view = 'Mês' then date(date_trunc('month', view_ref_date)) end as view_ref_date\r\n",
+        "    , first_reason\r\n",
+        "    , a.state\r\n",
+        "    , region\r\n",
+        "    , delivery_product\r\n",
+        "    , case when delivery_product in ('Flash', 'Mobi') then 'Malha'else 'Redespacho' end as type_delivery\r\n",
+        "    , case \r\n",
+        "        when funnel_status_delivery = '4. Entregue'                                           then 'Entregue'\r\n",
+        "        when funnel_status_delivery in ('6. Fragmentado', '7. Sinistrado')                    then 'Finalizado'\r\n",
+        "        when funnel_status_delivery not in ('6. Fragmentado', '7. Sinistrado', '4. Entregue') then 'Pendente'\r\n",
+        "        end as funnel_status_finish\r\n",
+        "    , count(distinct case when funnel_status_embossing = '1. Não processado FIS'  then coalesce(account_number, cpf) end) as fis_nok\r\n",
+        "    , count(distinct case when funnel_status_embossing <> '1. Não processado FIS' then fis_ar_code end) as fis_ok\r\n",
+        "\r\n",
+        "    , count(distinct case when funnel_status_embossing not in ('1. Não processado FIS', '5. Expedido') then fis_ar_code end) as emb_nok\r\n",
+        "    , count(distinct case when funnel_status_embossing = '5. Expedido' then fis_ar_code end) as emb_ok\r\n",
+        "\r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is null)\r\n",
+        "                            or a.custody_start_date < first_attempt_date) then fis_ar_code end) as cust_direto\r\n",
+        "\r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is null)\r\n",
+        "                          or a.custody_start_date < first_attempt_date)\r\n",
+        "                          and funnel_status_delivery in ('6. Fragmentado', '7. Sinistrado') then fis_ar_code end) as cust_finalizado\r\n",
+        "\r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is null)\r\n",
+        "                          or a.custody_start_date < first_attempt_date)\r\n",
+        "                          and funnel_status_delivery in ('4. Entregue') then fis_ar_code end) as cust_entregue\r\n",
+        "                            \r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is null)\r\n",
+        "                          or a.custody_start_date < first_attempt_date)\r\n",
+        "                          and funnel_status_delivery not in ('6. Fragmentado', '7. Sinistrado', '4. Entregue') then fis_ar_code end) as cust_em_rota\r\n",
+        "\r\n",
+        "    , count(distinct fis_ar_code) as qtde_total\r\n",
+        "\r\n",
+        "from (select\r\n",
+        "        case\r\n",
+        "            when :p_view_ref = 'Expedição' then date_format(embossing_expedition_date, 'yyyy-MM')\r\n",
+        "            when :p_view_ref = 'Cliente'   then date_format(date(card_acquired_at), 'yyyy-MM')\r\n",
+        "            when :p_view_ref = 'FIS'       then date_format(fis_reference_date, 'yyyy-MM')\r\n",
+        "        end as view_ref_date\r\n",
+        "        , *\r\n",
+        "        from self_service_analytics.logistics_tracking ) a\r\n",
+        "left join tracking_card_delivery b \r\n",
+        "  on a.fis_ar_code = b.ar_code\r\n",
+        "\r\n",
+        "where 1=1\r\n",
+        "  and view_ref_date between date(:p_date_range.min) and date(:p_date_range.max)\r\n",
+        "  and segment_base in ('PicPay PF', 'Original PF')\r\n",
+        "  and delivery_product not in ('Correios')\r\n",
+        "  and case when array_contains(:p_issue_reason_name, 'Todos') then 1=1 else array_contains(:p_issue_reason_name, issue_reason_name) end\r\n",
+        "  and case when array_contains(:p_card_variant, 'Todos') then 1=1 else array_contains(:p_card_variant, variant) end\r\n",
+        "  and case when array_contains(:delivery_product, 'Todos') then 1=1 else array_contains(:delivery_product, delivery_product) end\r\n",
+        "group by all\r\n",
+        "),\r\n",
+        "\r\n",
+        "base_pct as (\r\n",
+        "  select\r\n",
+        "    *\r\n",
+        "    , if(fis_nok = 0, null, fis_nok) / qtde_total * 100 as pct_fis_nok\r\n",
+        "    , if(fis_ok = 0, null, fis_ok)   / qtde_total * 100 as pct_fis_ok\r\n",
+        "\r\n",
+        "    , if(emb_nok = 0, null, emb_nok) / qtde_total * 100 as pct_emb_nok\r\n",
+        "    , if(emb_ok = 0, null, emb_ok)   / qtde_total * 100 as pct_emb_ok\r\n",
+        "\r\n",
+        "    , if(cust_direto = 0, null, cust_direto) / qtde_total * 100 as pct_cust_direto\r\n",
+        "    \r\n",
+        "    , if(cust_finalizado = 0, null, cust_finalizado) / cust_direto * 100 as pct_cust_finalizado\r\n",
+        "    , if(cust_entregue = 0, null, cust_entregue)     / cust_direto * 100 as pct_cust_entregue\r\n",
+        "    , if(cust_em_rota = 0, null, cust_em_rota)       / cust_direto * 100 as pct_cust_em_rota\r\n",
+        "  from base\r\n",
+        ")\r\n",
+        "\r\n",
+        "select\r\n",
+        "  *\r\n",
+        "  , pct_fis_nok as pct_fis_nok1\r\n",
+        "  , pct_emb_nok + pct_fis_nok as pct_emb_nok1\r\n",
+        "from base_pct\r\n",
+        "order by 1"
+      ],
+      "parameters": [
+        {
+          "displayName": "date_view",
+          "keyword": "date_view",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Mês"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "p_view_ref",
+          "keyword": "p_view_ref",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Cliente"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "p_date_range",
+          "keyword": "p_date_range",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-60d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        },
+        {
+          "displayName": "p_issue_reason_name",
+          "keyword": "p_issue_reason_name",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Todos"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "p_card_variant",
+          "keyword": "p_card_variant",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Todos"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "delivery_product",
+          "keyword": "delivery_product",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Todos"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "d5c9c5b2",
+      "displayName": "🔹 agg - Custódia indireta",
+      "queryLines": [
+        "with\r\n",
+        "attempt as (\r\n",
+        "  select\r\n",
+        "    ar_code\r\n",
+        "  , min (attempt_1_date) as first_attempt_date\r\n",
+        "  from card_operations.tracking_card_delivery\r\n",
+        "  where attempt_1_date is not null\r\n",
+        "  group by all\r\n",
+        "),\r\n",
+        "\r\n",
+        "tracking_card_delivery as (\r\n",
+        "  select\r\n",
+        "      a.*\r\n",
+        "    , b.first_attempt_date\r\n",
+        "  from card_operations.tracking_card_delivery as a\r\n",
+        "  left join attempt as b\r\n",
+        "    using (ar_code)\r\n",
+        "  qualify row_number() over (partition by ar_code order by last_status_at desc) = 1\r\n",
+        "),\r\n",
+        "\r\n",
+        "base as (\r\n",
+        "select\r\n",
+        "    case when :date_view = 'Mês' then date(date_trunc('month', view_ref_date)) end as view_ref_date\r\n",
+        "    , 'Vendas' as geral\r\n",
+        "    , count(distinct case when funnel_status_embossing = '1. Não processado FIS'  then coalesce(account_number, cpf) end) as fis_nok\r\n",
+        "    , count(distinct case when funnel_status_embossing <> '1. Não processado FIS' then fis_ar_code end) as fis_ok\r\n",
+        "\r\n",
+        "    , count(distinct case when funnel_status_embossing not in ('1. Não processado FIS', '5. Expedido') then fis_ar_code end) as emb_nok\r\n",
+        "    , count(distinct case when funnel_status_embossing = '5. Expedido' then fis_ar_code end) as emb_ok\r\n",
+        "\r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is not null)\r\n",
+        "                            or a.custody_start_date >= first_attempt_date) then fis_ar_code end) as cust_indireto\r\n",
+        "\r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is not null)\r\n",
+        "                          or a.custody_start_date >=  first_attempt_date)\r\n",
+        "                          and funnel_status_delivery in ('6. Fragmentado', '7. Sinistrado') then fis_ar_code end) as cust_finalizado\r\n",
+        "\r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is not null)\r\n",
+        "                          or a.custody_start_date >= first_attempt_date)\r\n",
+        "                          and funnel_status_delivery in ('4. Entregue') then fis_ar_code end) as cust_entregue\r\n",
+        "                            \r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is not null)\r\n",
+        "                          or a.custody_start_date >= first_attempt_date)\r\n",
+        "                          and funnel_status_delivery not in ('6. Fragmentado', '7. Sinistrado', '4. Entregue') then fis_ar_code end) as cust_em_rota\r\n",
+        "\r\n",
+        "    , count(distinct case when funnel_status_delivery in ('6. Fragmentado', '7. Sinistrado') then  fis_ar_code end) as qtde_finalizado\r\n",
+        "    , count(distinct case when funnel_status_delivery in ('4. Entregue') then  fis_ar_code end) as qtde_entregue\r\n",
+        "    , count(distinct case when funnel_status_delivery in ('5. Custódia') then  fis_ar_code end) as qtde_custodia\r\n",
+        "    , count(distinct case when funnel_status_delivery not in ('6. Fragmentado', '7. Sinistrado', '4. Entregue', '5. Custódia') then  fis_ar_code end) as qtde_em_rota\r\n",
+        "    , count(distinct fis_ar_code) as qtde_total\r\n",
+        "\r\n",
+        "from (select\r\n",
+        "        case\r\n",
+        "            when :p_view_ref = 'Expedição' then date_format(embossing_expedition_date, 'yyyy-MM')\r\n",
+        "            when :p_view_ref = 'Cliente'   then date_format(date(card_acquired_at), 'yyyy-MM')\r\n",
+        "            when :p_view_ref = 'FIS'       then date_format(fis_reference_date, 'yyyy-MM')\r\n",
+        "        end as view_ref_date\r\n",
+        "        , *\r\n",
+        "        from self_service_analytics.logistics_tracking ) a\r\n",
+        "left join tracking_card_delivery b \r\n",
+        "  on a.fis_ar_code = b.ar_code\r\n",
+        "\r\n",
+        "where 1=1\r\n",
+        "  and view_ref_date between date(:p_date_range.min) and date(:p_date_range.max)\r\n",
+        "  and segment_base in ('PicPay PF', 'Original PF')\r\n",
+        "  and delivery_product not in ('Correios')\r\n",
+        "  and case when array_contains(:p_issue_reason_name, 'Todos') then 1=1 else array_contains(:p_issue_reason_name, issue_reason_name) end\r\n",
+        "  and case when array_contains(:p_card_variant, 'Todos') then 1=1 else array_contains(:p_card_variant, variant) end\r\n",
+        "  and case when array_contains(:delivery_product, 'Todos') then 1=1 else array_contains(:delivery_product, delivery_product) end\r\n",
+        "group by all\r\n",
+        "),\r\n",
+        "\r\n",
+        "base_pct as (\r\n",
+        "  select\r\n",
+        "    *\r\n",
+        "    , if(fis_nok = 0, null, fis_nok) / qtde_total * 100 as pct_fis_nok\r\n",
+        "    , if(fis_ok = 0, null, fis_ok)   / qtde_total * 100 as pct_fis_ok\r\n",
+        "\r\n",
+        "    , if(emb_nok = 0, null, emb_nok) / qtde_total * 100 as pct_emb_nok\r\n",
+        "    , if(emb_ok = 0, null, emb_ok)   / qtde_total * 100 as pct_emb_ok\r\n",
+        "\r\n",
+        "    , if(cust_indireto = 0, null, cust_indireto) / qtde_total * 100 as pct_cust_direto\r\n",
+        "    \r\n",
+        "    , if(cust_finalizado = 0, null, cust_finalizado) / cust_indireto * 100 as pct_cust_finalizado\r\n",
+        "    , if(cust_entregue = 0, null, cust_entregue)     / cust_indireto * 100 as pct_cust_entregue\r\n",
+        "    , if(cust_em_rota = 0, null, cust_em_rota)       / cust_indireto * 100 as pct_cust_em_rota\r\n",
+        "\r\n",
+        "    , if(cust_finalizado = 0, null, cust_finalizado) / qtde_total * 100 as pct_qtde_finalizado\r\n",
+        "    , if(cust_entregue = 0, null, cust_entregue)     / qtde_total * 100 as pct_qtde_entregue\r\n",
+        "    , if(qtde_custodia = 0, null, qtde_custodia)     / qtde_total * 100 as pct_qtde_custodia\r\n",
+        "    , if(cust_em_rota = 0, null, cust_em_rota)       / qtde_total * 100 as pct_qtde_em_rota\r\n",
+        "  from base\r\n",
+        ")\r\n",
+        "\r\n",
+        "select\r\n",
+        "  *\r\n",
+        "  , pct_fis_nok as pct_fis_nok1\r\n",
+        "  , pct_emb_nok + pct_fis_nok as pct_emb_nok1\r\n",
+        "from base_pct\r\n",
+        "order by 1"
+      ],
+      "parameters": [
+        {
+          "displayName": "date_view",
+          "keyword": "date_view",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Mês"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "p_view_ref",
+          "keyword": "p_view_ref",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Cliente"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "p_date_range",
+          "keyword": "p_date_range",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-60d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        },
+        {
+          "displayName": "p_issue_reason_name",
+          "keyword": "p_issue_reason_name",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Todos"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "p_card_variant",
+          "keyword": "p_card_variant",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Todos"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "delivery_product",
+          "keyword": "delivery_product",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Todos"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "b19b8d7e",
+      "displayName": "🔹 anl - Custódia indireta",
+      "queryLines": [
+        "with\r\n",
+        "attempt as (\r\n",
+        "  select\r\n",
+        "    ar_code\r\n",
+        "  , min (attempt_1_date) as first_attempt_date\r\n",
+        "  from card_operations.tracking_card_delivery\r\n",
+        "  where attempt_1_date is not null\r\n",
+        "  group by all\r\n",
+        "),\r\n",
+        "\r\n",
+        "tracking_card_delivery as (\r\n",
+        "  select\r\n",
+        "      a.*\r\n",
+        "    , b.first_attempt_date\r\n",
+        "  from card_operations.tracking_card_delivery as a\r\n",
+        "  left join attempt as b\r\n",
+        "    using (ar_code)\r\n",
+        "  qualify row_number() over (partition by ar_code order by last_status_at desc) = 1\r\n",
+        "),\r\n",
+        "\r\n",
+        "base as (\r\n",
+        "select\r\n",
+        "    case\r\n",
+        "      when :date_view = 'Mês' then date(date_trunc('month', view_ref_date))\r\n",
+        "    end as view_ref_date\r\n",
+        "    , first_reason\r\n",
+        "    , a.state\r\n",
+        "    , region\r\n",
+        "    , delivery_product\r\n",
+        "    , case when delivery_product in ('Flash', 'Mobi') then 'Malha'else 'Redespacho' end as type_delivery\r\n",
+        "    , case \r\n",
+        "        when funnel_status_delivery = '4. Entregue'                                           then 'Entregue'\r\n",
+        "        when funnel_status_delivery in ('6. Fragmentado', '7. Sinistrado')                    then 'Finalizado'\r\n",
+        "        when funnel_status_delivery not in ('6. Fragmentado', '7. Sinistrado', '4. Entregue') then 'Pendente'\r\n",
+        "        end as funnel_status_finish\r\n",
+        "\r\n",
+        "    , count(distinct case when funnel_status_embossing = '1. Não processado FIS'  then coalesce(account_number, cpf) end) as fis_nok\r\n",
+        "    , count(distinct case when funnel_status_embossing <> '1. Não processado FIS' then fis_ar_code end) as fis_ok\r\n",
+        "\r\n",
+        "    , count(distinct case when funnel_status_embossing not in ('1. Não processado FIS', '5. Expedido')    then fis_ar_code end) as emb_nok\r\n",
+        "    , count(distinct case when funnel_status_embossing = '5. Expedido' then fis_ar_code end) as emb_ok\r\n",
+        "\r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is not null)\r\n",
+        "                            or a.custody_start_date >= first_attempt_date) then fis_ar_code end) as cust_indireto\r\n",
+        "\r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is not null)\r\n",
+        "                          or a.custody_start_date >=  first_attempt_date)\r\n",
+        "                          and funnel_status_delivery in ('6. Fragmentado', '7. Sinistrado') then fis_ar_code end) as cust_finalizado\r\n",
+        "\r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is not null)\r\n",
+        "                          or a.custody_start_date >= first_attempt_date)\r\n",
+        "                          and funnel_status_delivery in ('4. Entregue') then fis_ar_code end) as cust_entregue\r\n",
+        "                            \r\n",
+        "    , count(distinct case when ((a.custody_start_date is not null and first_attempt_date is not null)\r\n",
+        "                          or a.custody_start_date >= first_attempt_date)\r\n",
+        "                          and funnel_status_delivery not in ('6. Fragmentado', '7. Sinistrado', '4. Entregue') then fis_ar_code end) as cust_em_rota\r\n",
+        "\r\n",
+        "    , count(distinct case when funnel_status_delivery in ('6. Fragmentado', '7. Sinistrado') then  fis_ar_code end) as qtde_finalizado\r\n",
+        "    , count(distinct case when funnel_status_delivery in ('4. Entregue') then  fis_ar_code end) as qtde_entregue\r\n",
+        "    , count(distinct case when funnel_status_delivery in ('5. Custódia') then  fis_ar_code end) as qtde_custodia\r\n",
+        "    , count(distinct case when funnel_status_delivery not in ('6. Fragmentado', '7. Sinistrado', '4. Entregue', '5. Custódia') then  fis_ar_code end) as qtde_em_rota\r\n",
+        "    , count(distinct fis_ar_code) as qtde_total\r\n",
+        "\r\n",
+        "from (select\r\n",
+        "        case\r\n",
+        "            when :p_view_ref = 'Expedição' then date_format(embossing_expedition_date, 'yyyy-MM')\r\n",
+        "            when :p_view_ref = 'Cliente'   then date_format(date(card_acquired_at), 'yyyy-MM')\r\n",
+        "            when :p_view_ref = 'FIS'       then date_format(fis_reference_date, 'yyyy-MM')\r\n",
+        "        end as view_ref_date\r\n",
+        "        , *\r\n",
+        "        from self_service_analytics.logistics_tracking ) a\r\n",
+        "left join tracking_card_delivery b \r\n",
+        "  on a.fis_ar_code = b.ar_code\r\n",
+        "\r\n",
+        "where 1=1\r\n",
+        "  and view_ref_date between date(:p_date_range.min) and date(:p_date_range.max)\r\n",
+        "  and segment_base in ('PicPay PF', 'Original PF')\r\n",
+        "  and delivery_product not in ('Correios')\r\n",
+        "  and case when array_contains(:p_issue_reason_name, 'Todos') then 1=1 else array_contains(:p_issue_reason_name, issue_reason_name) end\r\n",
+        "  and case when array_contains(:p_card_variant, 'Todos') then 1=1 else array_contains(:p_card_variant, variant) end\r\n",
+        "  and case when array_contains(:delivery_product, 'Todos') then 1=1 else array_contains(:delivery_product, delivery_product) end\r\n",
+        "group by all\r\n",
+        "),\r\n",
+        "\r\n",
+        "base_pct as (\r\n",
+        "  select\r\n",
+        "    *\r\n",
+        "    , if(fis_nok = 0, null, fis_nok) / qtde_total * 100 as pct_fis_nok\r\n",
+        "    , if(fis_ok = 0, null, fis_ok)   / qtde_total * 100 as pct_fis_ok\r\n",
+        "\r\n",
+        "    , if(emb_nok = 0, null, emb_nok) / qtde_total * 100 as pct_emb_nok\r\n",
+        "    , if(emb_ok = 0, null, emb_ok)   / qtde_total * 100 as pct_emb_ok\r\n",
+        "\r\n",
+        "    , if(cust_indireto = 0, null, cust_indireto) / qtde_total * 100 as pct_cust_direto\r\n",
+        "    \r\n",
+        "    , if(cust_finalizado = 0, null, cust_finalizado) / cust_indireto * 100 as pct_cust_finalizado\r\n",
+        "    , if(cust_entregue = 0, null, cust_entregue)     / cust_indireto * 100 as pct_cust_entregue\r\n",
+        "    , if(cust_em_rota = 0, null, cust_em_rota)       / cust_indireto * 100 as pct_cust_em_rota\r\n",
+        "\r\n",
+        "    , if(qtde_finalizado = 0, null, qtde_finalizado) / qtde_total * 100 as pct_qtde_finalizado\r\n",
+        "    , if(qtde_entregue = 0, null, qtde_entregue)     / qtde_total * 100 as pct_qtde_entregue\r\n",
+        "    , if(qtde_custodia = 0, null, qtde_custodia)     / qtde_total * 100 as pct_qtde_custodia\r\n",
+        "    , if(qtde_em_rota = 0, null, qtde_em_rota)       / qtde_total * 100 as pct_qtde_em_rota\r\n",
+        "  from base\r\n",
+        ")\r\n",
+        "\r\n",
+        "select\r\n",
+        "  *\r\n",
+        "  , pct_fis_nok as pct_fis_nok1\r\n",
+        "  , pct_emb_nok + pct_fis_nok as pct_emb_nok1\r\n",
+        "from base_pct\r\n",
+        "order by 1"
+      ],
+      "parameters": [
+        {
+          "displayName": "date_view",
+          "keyword": "date_view",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Mês"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "p_view_ref",
+          "keyword": "p_view_ref",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Cliente"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "p_date_range",
+          "keyword": "p_date_range",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "now-60d/d"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        },
+        {
+          "displayName": "p_issue_reason_name",
+          "keyword": "p_issue_reason_name",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Todos"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "p_card_variant",
+          "keyword": "p_card_variant",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Todos"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "displayName": "delivery_product",
+          "keyword": "delivery_product",
+          "dataType": "STRING",
+          "complexType": "MULTI",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Todos"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "8336fb99",
+      "displayName": "dd_issue_reason",
+      "queryLines": [
+        "select\n",
+        "  *\n",
+        "from\n",
+        "  (\n",
+        "    values\n",
+        "    ('Primeira via'),\n",
+        "    ('Reemissão'),\n",
+        "    ('Renovação Automática')\n",
+        ") as data(dd_issue_reason)"
+      ]
+    },
+    {
+      "name": "de34f044",
+      "displayName": "dd_variant",
+      "queryLines": [
+        "select\n",
+        "  *\n",
+        "from\n",
+        "  (\n",
+        "    values\n",
+        "    ('Epic'),\n",
+        "    ('Black'),\n",
+        "    ('Platinum'),\n",
+        "    ('Gold'),\n",
+        "    ('Empresa'),\n",
+        "    ('Internacional'),\n",
+        "    ('Não identificado')\n",
+        ") as data(dd_card_variant)"
+      ]
+    },
+    {
+      "name": "65ca5d5f",
+      "displayName": "dd_delivery_product",
+      "queryLines": [
+        "select\n",
+        "  *\n",
+        "from\n",
+        "  (\n",
+        "    values\n",
+        "    ('Flash'),\n",
+        "    ('Mobi'),\n",
+        "    ('Flash - Redespacho'),\n",
+        "    ('Mobi - Redespacho')\n",
+        ") as data(dd_delivery_product)"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "d544ab8f",
+      "displayName": "🔹 Custódia indireta",
+      "layout": [
+        {
+          "widget": {
+            "name": "eb692dd2",
+            "queries": [
+              {
+                "name": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a856bbe2126da48312facb586d73_p_date_range",
+                "query": {
+                  "datasetName": "d5c9c5b2",
+                  "parameters": [
+                    {
+                      "name": "p_date_range",
+                      "keyword": "p_date_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a85dd5e414d2bf95291eda1a18ef_p_date_range",
+                "query": {
+                  "datasetName": "b19b8d7e",
+                  "parameters": [
+                    {
+                      "name": "p_date_range",
+                      "keyword": "p_date_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "parameterName": "p_date_range",
+                    "queryName": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a856bbe2126da48312facb586d73_p_date_range"
+                  },
+                  {
+                    "parameterName": "p_date_range",
+                    "queryName": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a85dd5e414d2bf95291eda1a18ef_p_date_range"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "🗓️ Data"
+              },
+              "selection": {
+                "defaultSelection": {
+                  "range": {
+                    "dataType": "DATE",
+                    "min": {
+                      "value": "2025-01-01T00:00:00.000"
+                    },
+                    "max": {
+                      "value": "2025-10-16T23:59:59.999"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 0,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "9a85933e",
+            "queries": [
+              {
+                "name": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a860424a18cb9396f387531ab8b5_dd_issue_reason",
+                "query": {
+                  "datasetName": "8336fb99",
+                  "fields": [
+                    {
+                      "name": "dd_issue_reason",
+                      "expression": "`dd_issue_reason`"
+                    },
+                    {
+                      "name": "dd_issue_reason_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a856bbe2126da48312facb586d73_p_issue_reason_name",
+                "query": {
+                  "datasetName": "d5c9c5b2",
+                  "parameters": [
+                    {
+                      "name": "p_issue_reason_name",
+                      "keyword": "p_issue_reason_name"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a85dd5e414d2bf95291eda1a18ef_p_issue_reason_name",
+                "query": {
+                  "datasetName": "b19b8d7e",
+                  "parameters": [
+                    {
+                      "name": "p_issue_reason_name",
+                      "keyword": "p_issue_reason_name"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "dd_issue_reason",
+                    "queryName": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a860424a18cb9396f387531ab8b5_dd_issue_reason"
+                  },
+                  {
+                    "parameterName": "p_issue_reason_name",
+                    "queryName": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a856bbe2126da48312facb586d73_p_issue_reason_name"
+                  },
+                  {
+                    "parameterName": "p_issue_reason_name",
+                    "queryName": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a85dd5e414d2bf95291eda1a18ef_p_issue_reason_name"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Vias"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 1,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "5c11bb06",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "d5c9c5b2",
+                  "fields": [
+                    {
+                      "name": "view_ref_date",
+                      "expression": "`view_ref_date`"
+                    },
+                    {
+                      "name": "qtde_total",
+                      "expression": "`qtde_total`"
+                    },
+                    {
+                      "name": "cust_indireto",
+                      "expression": "`cust_indireto`"
+                    },
+                    {
+                      "name": "pct_cust_direto",
+                      "expression": "`pct_cust_direto`"
+                    },
+                    {
+                      "name": "pct_cust_entregue",
+                      "expression": "`pct_cust_entregue`"
+                    },
+                    {
+                      "name": "pct_cust_em_rota",
+                      "expression": "`pct_cust_em_rota`"
+                    },
+                    {
+                      "name": "pct_cust_finalizado",
+                      "expression": "`pct_cust_finalizado`"
+                    },
+                    {
+                      "name": "pct_qtde_entregue",
+                      "expression": "`pct_qtde_entregue`"
+                    },
+                    {
+                      "name": "pct_qtde_em_rota",
+                      "expression": "`pct_qtde_em_rota`"
+                    },
+                    {
+                      "name": "pct_qtde_finalizado",
+                      "expression": "`pct_qtde_finalizado`"
+                    },
+                    {
+                      "name": "pct_qtde_custodia",
+                      "expression": "`pct_qtde_custodia`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "view_ref_date",
+                    "dateTimeFormat": "DD/MM/YYYY",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "date",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 0,
+                    "title": "Data referência",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "qtde_total",
+                    "numberFormat": "0,0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 2,
+                    "title": "Total",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "cust_indireto",
+                    "numberFormat": "0,0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 13,
+                    "title": "Custódia indireta",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "pct_cust_direto",
+                    "numberFormat": "0.0%",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 14,
+                    "title": "Custódia",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "description": "Entrou em custódia com tentativa de entrega",
+                    "cellFormat": {
+                      "default": {
+                        "foregroundColor": {
+                          "themeColorType": "visualizationColors",
+                          "position": 2
+                        }
+                      },
+                      "rules": []
+                    }
+                  },
+                  {
+                    "fieldName": "pct_cust_entregue",
+                    "numberFormat": "0.0%",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 18,
+                    "title": "Custódia➔Entregue",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "cellFormat": {
+                      "default": {
+                        "foregroundColor": {
+                          "themeColorType": "visualizationColors",
+                          "position": 7
+                        }
+                      },
+                      "rules": []
+                    }
+                  },
+                  {
+                    "fieldName": "pct_cust_em_rota",
+                    "numberFormat": "0.0%",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 19,
+                    "title": "Custódia➔Pendente",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "cellFormat": {
+                      "default": {
+                        "foregroundColor": {
+                          "themeColorType": "visualizationColors",
+                          "position": 9
+                        }
+                      },
+                      "rules": []
+                    },
+                    "description": "Em rota de entrega"
+                  },
+                  {
+                    "fieldName": "pct_cust_finalizado",
+                    "numberFormat": "0.0%",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 20,
+                    "title": "Custódia➔Finalizado",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "cellFormat": {
+                      "default": {
+                        "foregroundColor": {
+                          "themeColorType": "visualizationColors",
+                          "position": 8
+                        }
+                      },
+                      "rules": []
+                    },
+                    "description": "Status de fragmentado ou sinistrado"
+                  },
+                  {
+                    "fieldName": "pct_qtde_entregue",
+                    "numberFormat": "0.0%",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 25,
+                    "title": "Entregue",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "description": "Referente a Custódia direta"
+                  },
+                  {
+                    "fieldName": "pct_qtde_em_rota",
+                    "numberFormat": "0.0%",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 26,
+                    "title": "Em rota",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "description": "Referente a Custódia direta"
+                  },
+                  {
+                    "fieldName": "pct_qtde_finalizado",
+                    "numberFormat": "0.0%",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 27,
+                    "title": "Finalizado",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "cellFormat": {
+                      "default": {
+                        "foregroundColor": {
+                          "themeColorType": "fontColor"
+                        }
+                      },
+                      "rules": []
+                    },
+                    "description": "Referente a Custódia direta"
+                  },
+                  {
+                    "fieldName": "pct_qtde_custodia",
+                    "numberFormat": "0.0%",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 28,
+                    "title": "Custódia",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "description": "% do número total"
+                  }
+                ]
+              },
+              "invisibleColumns": [
+                {
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "geral",
+                  "type": "string",
+                  "displayAs": "string",
+                  "order": 1,
+                  "title": "geral",
+                  "allowSearch": false,
+                  "alignContent": "left",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0,0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "fis_nok",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 3,
+                  "title": "fis_nok",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "fis_ok",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 4,
+                  "title": "fis_ok",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "emb_nok",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 5,
+                  "title": "emb_nok",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "emb_ok",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 6,
+                  "title": "emb_ok",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0.0%",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "pct_fis_nok",
+                  "type": "float",
+                  "displayAs": "number",
+                  "order": 7,
+                  "title": "pct_fis_nok",
+                  "allowSearch": false,
+                  "alignContent": "center",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false,
+                  "cellFormat": {
+                    "default": {
+                      "foregroundColor": null
+                    },
+                    "rules": []
+                  }
+                },
+                {
+                  "numberFormat": "0.00",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "pct_fis_ok",
+                  "type": "float",
+                  "displayAs": "number",
+                  "order": 8,
+                  "title": "pct_fis_ok",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0.0%",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "pct_emb_nok",
+                  "type": "float",
+                  "displayAs": "number",
+                  "order": 9,
+                  "title": "pct_emb_nok",
+                  "allowSearch": false,
+                  "alignContent": "center",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false,
+                  "scalePercentBy100": false
+                },
+                {
+                  "numberFormat": "0.00",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "pct_emb_ok",
+                  "type": "float",
+                  "displayAs": "number",
+                  "order": 10,
+                  "title": "pct_emb_ok",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0.0%",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "pct_fis_nok1",
+                  "type": "float",
+                  "displayAs": "number",
+                  "order": 11,
+                  "title": "FIS NOK",
+                  "allowSearch": false,
+                  "alignContent": "center",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0.0%",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "pct_emb_nok1",
+                  "type": "float",
+                  "displayAs": "number",
+                  "order": 12,
+                  "title": "Emb NOK",
+                  "allowSearch": false,
+                  "alignContent": "center",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "cust_finalizado",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 15,
+                  "title": "cust_finalizado",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "cust_entregue",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 16,
+                  "title": "cust_entregue",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "cust_em_rota",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 17,
+                  "title": "cust_em_rota",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false,
+                  "cellFormat": {
+                    "default": {
+                      "foregroundColor": {
+                        "themeColorType": "visualizationColors",
+                        "position": 9
+                      }
+                    },
+                    "rules": []
+                  }
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "qtde_finalizado",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 22,
+                  "title": "qtde_finalizado",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "qtde_entregue",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 23,
+                  "title": "qtde_entregue",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "qtde_custodia",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 24,
+                  "title": "qtde_custodia",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "qtde_em_rota",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 29,
+                  "title": "qtde_em_rota",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                }
+              ],
+              "allowHTMLByDefault": false,
+              "itemsPerPage": 25,
+              "paginationSize": "default",
+              "condensed": true,
+              "withRowNumber": false,
+              "frame": {
+                "showTitle": true,
+                "title": "Funil",
+                "showDescription": true,
+                "description": "ℹ️ Status Finalizado, Entregue, Custódia e Em rota sáo referentes aos números gerais"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "f9192bc1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "b19b8d7e",
+                  "fields": [
+                    {
+                      "name": "state",
+                      "expression": "`state`"
+                    },
+                    {
+                      "name": "monthly(view_ref_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `view_ref_date`)"
+                    },
+                    {
+                      "name": "sum(cust_indireto)",
+                      "expression": "SUM(`cust_indireto`)"
+                    }
+                  ],
+                  "cubeGroupingSets": {
+                    "sets": [
+                      {
+                        "fieldNames": [
+                          "state"
+                        ]
+                      },
+                      {
+                        "fieldNames": [
+                          "monthly(view_ref_date)"
+                        ]
+                      }
+                    ]
+                  },
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "ASC",
+                      "expression": "`state`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `view_ref_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pivot",
+              "encodings": {
+                "rows": [
+                  {
+                    "fieldName": "state",
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "cell-reversed",
+                        "field": {
+                          "index": 0
+                        }
+                      }
+                    },
+                    "displayName": "UFs"
+                  }
+                ],
+                "columns": [
+                  {
+                    "fieldName": "monthly(view_ref_date)",
+                    "displayName": "Mês"
+                  }
+                ],
+                "cell": {
+                  "type": "multi-cell",
+                  "fields": [
+                    {
+                      "fieldName": "sum(cust_indireto)",
+                      "cellType": "text",
+                      "format": {
+                        "type": "number-plain",
+                        "abbreviation": "none",
+                        "decimalPlaces": {
+                          "type": "exact",
+                          "places": 0
+                        },
+                        "hideGroupSeparator": false
+                      },
+                      "contentAlignment": "center",
+                      "displayName": " "
+                    }
+                  ]
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Quantidade por UF",
+                "showDescription": true,
+                "description": "ℹ️ Quantidade referente a primeira vez em que o cartão entrou em custódia"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 15,
+            "width": 6,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "e1672035",
+            "queries": [
+              {
+                "name": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a85dd5e414d2bf95291eda1a18ef_funnel_status_finish",
+                "query": {
+                  "datasetName": "b19b8d7e",
+                  "fields": [
+                    {
+                      "name": "funnel_status_finish",
+                      "expression": "`funnel_status_finish`"
+                    },
+                    {
+                      "name": "funnel_status_finish_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "funnel_status_finish",
+                    "queryName": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a85dd5e414d2bf95291eda1a18ef_funnel_status_finish"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Status finalizadores"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 13,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "5719c6d8",
+            "multilineTextboxSpec": {
+              "lines": [
+                "<span style=\"font-size:14px\">ℹ️ </span><span style=\"font-size:14px\">**Custódia indireta:**</span><span style=\"font-size:14px\"> Quando o cartão entrou em custódia tendo </span><span style=\"font-size:14px\">**pelo menos uma tentativa de entrega**</span><span style=\"font-size:14px\"> - e quais foram os status posteriores</span>"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "eebbdad6",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "b19b8d7e",
+                  "fields": [
+                    {
+                      "name": "first_reason",
+                      "expression": "`first_reason`"
+                    },
+                    {
+                      "name": "monthly(view_ref_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `view_ref_date`)"
+                    },
+                    {
+                      "name": "sum(cust_indireto)",
+                      "expression": "SUM(`cust_indireto`)"
+                    }
+                  ],
+                  "cubeGroupingSets": {
+                    "sets": [
+                      {
+                        "fieldNames": [
+                          "first_reason"
+                        ]
+                      },
+                      {
+                        "fieldNames": [
+                          "monthly(view_ref_date)"
+                        ]
+                      }
+                    ]
+                  },
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "ASC",
+                      "expression": "`first_reason`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `view_ref_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pivot",
+              "encodings": {
+                "rows": [
+                  {
+                    "fieldName": "first_reason",
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "cell-reversed",
+                        "field": {
+                          "index": 0
+                        }
+                      }
+                    },
+                    "displayName": "Reasons"
+                  }
+                ],
+                "columns": [
+                  {
+                    "fieldName": "monthly(view_ref_date)",
+                    "displayName": "Mês"
+                  }
+                ],
+                "cell": {
+                  "type": "multi-cell",
+                  "fields": [
+                    {
+                      "fieldName": "sum(cust_indireto)",
+                      "cellType": "text",
+                      "format": {
+                        "type": "number-plain",
+                        "abbreviation": "none",
+                        "decimalPlaces": {
+                          "type": "exact",
+                          "places": 0
+                        },
+                        "hideGroupSeparator": false
+                      },
+                      "contentAlignment": "center",
+                      "displayName": " "
+                    }
+                  ]
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Quantidade por reason",
+                "showDescription": true,
+                "description": "ℹ️ Quantidade e reason referente a primeira vez em que o cartão entrou em custódia"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 24,
+            "width": 6,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "5c4eabe8",
+            "queries": [
+              {
+                "name": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a85dd5e414d2bf95291eda1a18ef_region",
+                "query": {
+                  "datasetName": "b19b8d7e",
+                  "fields": [
+                    {
+                      "name": "region",
+                      "expression": "`region`"
+                    },
+                    {
+                      "name": "region_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "region",
+                    "queryName": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a85dd5e414d2bf95291eda1a18ef_region"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Região"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 13,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "a9a89ebf",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Custódia indireta\n",
+                "<p>&nbsp;</p>\n",
+                "\n",
+                "<p>&nbsp;</p>\n",
+                "\n",
+                "Funil de tudo o que produzimos, contendo os status de entregue, em andamento e finalizado\n",
+                "\n",
+                "**➡️&#32; *Em andamento:****&#32;Cartões em rota de entrega*\n",
+                "\n",
+                "**➡️&#32; *Finalizado:****&#32;Cartões com status de fragmentado ou sinistrado*"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 4,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "7ffb613a",
+            "queries": [
+              {
+                "name": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a861519213dcacf42c8f22a26776_dd_card_variant",
+                "query": {
+                  "datasetName": "de34f044",
+                  "fields": [
+                    {
+                      "name": "dd_card_variant",
+                      "expression": "`dd_card_variant`"
+                    },
+                    {
+                      "name": "dd_card_variant_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a856bbe2126da48312facb586d73_p_card_variant",
+                "query": {
+                  "datasetName": "d5c9c5b2",
+                  "parameters": [
+                    {
+                      "name": "p_card_variant",
+                      "keyword": "p_card_variant"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a85dd5e414d2bf95291eda1a18ef_p_card_variant",
+                "query": {
+                  "datasetName": "b19b8d7e",
+                  "parameters": [
+                    {
+                      "name": "p_card_variant",
+                      "keyword": "p_card_variant"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "dd_card_variant",
+                    "queryName": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a861519213dcacf42c8f22a26776_dd_card_variant"
+                  },
+                  {
+                    "parameterName": "p_card_variant",
+                    "queryName": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a856bbe2126da48312facb586d73_p_card_variant"
+                  },
+                  {
+                    "parameterName": "p_card_variant",
+                    "queryName": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a85dd5e414d2bf95291eda1a18ef_p_card_variant"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Variant"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "c8553f9e",
+            "queries": [
+              {
+                "name": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a85dd5e414d2bf95291eda1a18ef_type_delivery",
+                "query": {
+                  "datasetName": "b19b8d7e",
+                  "fields": [
+                    {
+                      "name": "type_delivery",
+                      "expression": "`type_delivery`"
+                    },
+                    {
+                      "name": "type_delivery_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "type_delivery",
+                    "queryName": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a85dd5e414d2bf95291eda1a18ef_type_delivery"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Tipo courier"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 13,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "4473f944",
+            "queries": [
+              {
+                "name": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a85dd5e414d2bf95291eda1a18ef_first_reason",
+                "query": {
+                  "datasetName": "b19b8d7e",
+                  "fields": [
+                    {
+                      "name": "first_reason",
+                      "expression": "`first_reason`"
+                    },
+                    {
+                      "name": "first_reason_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "first_reason",
+                    "queryName": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a85dd5e414d2bf95291eda1a18ef_first_reason"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Reason"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 14,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "b9ba455c",
+            "queries": [
+              {
+                "name": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a8712b251187840767bacb188313_dd_delivery_product",
+                "query": {
+                  "datasetName": "65ca5d5f",
+                  "fields": [
+                    {
+                      "name": "dd_delivery_product",
+                      "expression": "`dd_delivery_product`"
+                    },
+                    {
+                      "name": "dd_delivery_product_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a856bbe2126da48312facb586d73_delivery_product",
+                "query": {
+                  "datasetName": "d5c9c5b2",
+                  "parameters": [
+                    {
+                      "name": "delivery_product",
+                      "keyword": "delivery_product"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a85dd5e414d2bf95291eda1a18ef_delivery_product",
+                "query": {
+                  "datasetName": "b19b8d7e",
+                  "parameters": [
+                    {
+                      "name": "delivery_product",
+                      "keyword": "delivery_product"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "dd_delivery_product",
+                    "queryName": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a8712b251187840767bacb188313_dd_delivery_product"
+                  },
+                  {
+                    "parameterName": "delivery_product",
+                    "queryName": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a856bbe2126da48312facb586d73_delivery_product"
+                  },
+                  {
+                    "parameterName": "delivery_product",
+                    "queryName": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a85dd5e414d2bf95291eda1a18ef_delivery_product"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Courier"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 3,
+            "width": 2,
+            "height": 1
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "name": "1b05f642",
+      "displayName": "🔸 Custódia direta",
+      "layout": [
+        {
+          "widget": {
+            "name": "03de19ed",
+            "queries": [
+              {
+                "name": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a817c8ab180fa1384b26743fec16_p_date_range",
+                "query": {
+                  "datasetName": "3c155698",
+                  "parameters": [
+                    {
+                      "name": "p_date_range",
+                      "keyword": "p_date_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a852db431614871edb70989180e8_p_date_range",
+                "query": {
+                  "datasetName": "c53ce5de",
+                  "parameters": [
+                    {
+                      "name": "p_date_range",
+                      "keyword": "p_date_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "parameterName": "p_date_range",
+                    "queryName": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a817c8ab180fa1384b26743fec16_p_date_range"
+                  },
+                  {
+                    "parameterName": "p_date_range",
+                    "queryName": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a852db431614871edb70989180e8_p_date_range"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "🗓️ Data"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 0,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "e3874166",
+            "queries": [
+              {
+                "name": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a860424a18cb9396f387531ab8b5_dd_issue_reason",
+                "query": {
+                  "datasetName": "8336fb99",
+                  "fields": [
+                    {
+                      "name": "dd_issue_reason",
+                      "expression": "`dd_issue_reason`"
+                    },
+                    {
+                      "name": "dd_issue_reason_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a817c8ab180fa1384b26743fec16_p_issue_reason_name",
+                "query": {
+                  "datasetName": "3c155698",
+                  "parameters": [
+                    {
+                      "name": "p_issue_reason_name",
+                      "keyword": "p_issue_reason_name"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a852db431614871edb70989180e8_p_issue_reason_name",
+                "query": {
+                  "datasetName": "c53ce5de",
+                  "parameters": [
+                    {
+                      "name": "p_issue_reason_name",
+                      "keyword": "p_issue_reason_name"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "dd_issue_reason",
+                    "queryName": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a860424a18cb9396f387531ab8b5_dd_issue_reason"
+                  },
+                  {
+                    "parameterName": "p_issue_reason_name",
+                    "queryName": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a817c8ab180fa1384b26743fec16_p_issue_reason_name"
+                  },
+                  {
+                    "parameterName": "p_issue_reason_name",
+                    "queryName": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a852db431614871edb70989180e8_p_issue_reason_name"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Vias"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 1,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "04b50b05",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "3c155698",
+                  "fields": [
+                    {
+                      "name": "view_ref_date",
+                      "expression": "`view_ref_date`"
+                    },
+                    {
+                      "name": "qtde_total",
+                      "expression": "`qtde_total`"
+                    },
+                    {
+                      "name": "cust_direto",
+                      "expression": "`cust_direto`"
+                    },
+                    {
+                      "name": "pct_cust_direto",
+                      "expression": "`pct_cust_direto`"
+                    },
+                    {
+                      "name": "pct_cust_entregue",
+                      "expression": "`pct_cust_entregue`"
+                    },
+                    {
+                      "name": "pct_cust_em_rota",
+                      "expression": "`pct_cust_em_rota`"
+                    },
+                    {
+                      "name": "pct_cust_finalizado",
+                      "expression": "`pct_cust_finalizado`"
+                    },
+                    {
+                      "name": "pct_qtde_entregue",
+                      "expression": "`pct_qtde_entregue`"
+                    },
+                    {
+                      "name": "pct_qtde_em_rota",
+                      "expression": "`pct_qtde_em_rota`"
+                    },
+                    {
+                      "name": "pct_qtde_finalizado",
+                      "expression": "`pct_qtde_finalizado`"
+                    },
+                    {
+                      "name": "pct_qtde_custodia",
+                      "expression": "`pct_qtde_custodia`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "view_ref_date",
+                    "dateTimeFormat": "DD/MM/YYYY",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "date",
+                    "displayAs": "datetime",
+                    "visible": true,
+                    "order": 0,
+                    "title": "Data referência",
+                    "allowSearch": false,
+                    "alignContent": "right",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "qtde_total",
+                    "numberFormat": "0,0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 2,
+                    "title": "Total",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "cust_direto",
+                    "numberFormat": "0,0",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "integer",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 13,
+                    "title": "Custódia direta",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "pct_cust_direto",
+                    "numberFormat": "0.0%",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 14,
+                    "title": "Cust. Direta",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "description": "Entrou em custódia sem tentativa de entrega",
+                    "cellFormat": {
+                      "default": {
+                        "foregroundColor": {
+                          "themeColorType": "visualizationColors",
+                          "position": 2
+                        }
+                      },
+                      "rules": []
+                    }
+                  },
+                  {
+                    "fieldName": "pct_cust_entregue",
+                    "numberFormat": "0.0%",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 18,
+                    "title": "Cust. Direta ➔ Entregue",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "cellFormat": {
+                      "default": {
+                        "foregroundColor": {
+                          "themeColorType": "visualizationColors",
+                          "position": 7
+                        }
+                      },
+                      "rules": []
+                    }
+                  },
+                  {
+                    "fieldName": "pct_cust_em_rota",
+                    "numberFormat": "0.0%",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 19,
+                    "title": "Cust. Direta ➔ Pendente",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "cellFormat": {
+                      "default": {
+                        "foregroundColor": {
+                          "themeColorType": "visualizationColors",
+                          "position": 9
+                        }
+                      },
+                      "rules": []
+                    },
+                    "description": "Em rota de entrega"
+                  },
+                  {
+                    "fieldName": "pct_cust_finalizado",
+                    "numberFormat": "0.0%",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 20,
+                    "title": "Cust. Direta ➔ Finalizado",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "cellFormat": {
+                      "default": {
+                        "foregroundColor": {
+                          "themeColorType": "visualizationColors",
+                          "position": 8
+                        }
+                      },
+                      "rules": []
+                    },
+                    "description": "Status de fragmentado ou sinistrado"
+                  },
+                  {
+                    "fieldName": "pct_qtde_entregue",
+                    "numberFormat": "0.0%",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 25,
+                    "title": "Entregue",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "description": "Referente a Custódia direta"
+                  },
+                  {
+                    "fieldName": "pct_qtde_em_rota",
+                    "numberFormat": "0.0%",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 26,
+                    "title": "Pendente",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "description": "Referente a Custódia direta"
+                  },
+                  {
+                    "fieldName": "pct_qtde_finalizado",
+                    "numberFormat": "0.0%",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 27,
+                    "title": "Finalizado",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "description": "Referente a Custódia direta"
+                  },
+                  {
+                    "fieldName": "pct_qtde_custodia",
+                    "numberFormat": "0.0%",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "float",
+                    "displayAs": "number",
+                    "visible": true,
+                    "order": 28,
+                    "title": "Custódia",
+                    "allowSearch": false,
+                    "alignContent": "center",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false,
+                    "description": "% do número total"
+                  }
+                ]
+              },
+              "invisibleColumns": [
+                {
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "geral",
+                  "type": "string",
+                  "displayAs": "string",
+                  "order": 1,
+                  "title": "geral",
+                  "allowSearch": false,
+                  "alignContent": "left",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0,0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "fis_nok",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 3,
+                  "title": "fis_nok",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "fis_ok",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 4,
+                  "title": "fis_ok",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "emb_nok",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 5,
+                  "title": "emb_nok",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "emb_ok",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 6,
+                  "title": "emb_ok",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0.0%",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "pct_fis_nok",
+                  "type": "float",
+                  "displayAs": "number",
+                  "order": 7,
+                  "title": "pct_fis_nok",
+                  "allowSearch": false,
+                  "alignContent": "center",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false,
+                  "cellFormat": {
+                    "default": {
+                      "foregroundColor": null
+                    },
+                    "rules": []
+                  }
+                },
+                {
+                  "numberFormat": "0.00",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "pct_fis_ok",
+                  "type": "float",
+                  "displayAs": "number",
+                  "order": 8,
+                  "title": "pct_fis_ok",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0.0%",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "pct_emb_nok",
+                  "type": "float",
+                  "displayAs": "number",
+                  "order": 9,
+                  "title": "pct_emb_nok",
+                  "allowSearch": false,
+                  "alignContent": "center",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false,
+                  "scalePercentBy100": false
+                },
+                {
+                  "numberFormat": "0.00",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "pct_emb_ok",
+                  "type": "float",
+                  "displayAs": "number",
+                  "order": 10,
+                  "title": "pct_emb_ok",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0.0%",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "pct_fis_nok1",
+                  "type": "float",
+                  "displayAs": "number",
+                  "order": 11,
+                  "title": "FIS NOK",
+                  "allowSearch": false,
+                  "alignContent": "center",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0.0%",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "pct_emb_nok1",
+                  "type": "float",
+                  "displayAs": "number",
+                  "order": 12,
+                  "title": "Emb NOK",
+                  "allowSearch": false,
+                  "alignContent": "center",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "cust_finalizado",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 15,
+                  "title": "cust_finalizado",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "cust_entregue",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 16,
+                  "title": "cust_entregue",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "cust_em_rota",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 17,
+                  "title": "cust_em_rota",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false,
+                  "cellFormat": {
+                    "default": {
+                      "foregroundColor": {
+                        "themeColorType": "visualizationColors",
+                        "position": 9
+                      }
+                    },
+                    "rules": []
+                  }
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "qtde_finalizado",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 21,
+                  "title": "qtde_finalizado",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "qtde_entregue",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 22,
+                  "title": "qtde_entregue",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "qtde_custodia",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 23,
+                  "title": "qtde_custodia",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "qtde_em_rota",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 24,
+                  "title": "qtde_em_rota",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "cust_custodia",
+                  "type": "integer",
+                  "displayAs": "number",
+                  "order": 29,
+                  "title": "cust_custodia",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                },
+                {
+                  "numberFormat": "0.00",
+                  "booleanValues": [
+                    "false",
+                    "true"
+                  ],
+                  "imageUrlTemplate": "{{ @ }}",
+                  "imageTitleTemplate": "{{ @ }}",
+                  "imageWidth": "",
+                  "imageHeight": "",
+                  "linkUrlTemplate": "{{ @ }}",
+                  "linkTextTemplate": "{{ @ }}",
+                  "linkTitleTemplate": "{{ @ }}",
+                  "linkOpenInNewTab": true,
+                  "name": "pct_cust_custodia",
+                  "type": "float",
+                  "displayAs": "number",
+                  "order": 30,
+                  "title": "pct_cust_custodia",
+                  "allowSearch": false,
+                  "alignContent": "right",
+                  "allowHTML": false,
+                  "highlightLinks": false,
+                  "useMonospaceFont": false,
+                  "preserveWhitespace": false
+                }
+              ],
+              "allowHTMLByDefault": false,
+              "itemsPerPage": 25,
+              "paginationSize": "default",
+              "condensed": true,
+              "withRowNumber": false,
+              "frame": {
+                "showTitle": true,
+                "title": "Funil",
+                "showDescription": true,
+                "description": "ℹ️ Status Finalizado, Entregue, Custódia e Em rota sáo referentes aos números gerais"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "7f8e6083",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "c53ce5de",
+                  "fields": [
+                    {
+                      "name": "state",
+                      "expression": "`state`"
+                    },
+                    {
+                      "name": "monthly(view_ref_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `view_ref_date`)"
+                    },
+                    {
+                      "name": "sum(cust_direto)",
+                      "expression": "SUM(`cust_direto`)"
+                    }
+                  ],
+                  "cubeGroupingSets": {
+                    "sets": [
+                      {
+                        "fieldNames": [
+                          "state"
+                        ]
+                      },
+                      {
+                        "fieldNames": [
+                          "monthly(view_ref_date)"
+                        ]
+                      }
+                    ]
+                  },
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "ASC",
+                      "expression": "`state`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `view_ref_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pivot",
+              "encodings": {
+                "rows": [
+                  {
+                    "fieldName": "state",
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "cell-reversed",
+                        "field": {
+                          "index": 0
+                        }
+                      }
+                    },
+                    "displayName": "UFs"
+                  }
+                ],
+                "columns": [
+                  {
+                    "fieldName": "monthly(view_ref_date)",
+                    "displayName": "Mês"
+                  }
+                ],
+                "cell": {
+                  "type": "multi-cell",
+                  "fields": [
+                    {
+                      "fieldName": "sum(cust_direto)",
+                      "cellType": "text",
+                      "format": {
+                        "type": "number-plain",
+                        "abbreviation": "none",
+                        "decimalPlaces": {
+                          "type": "exact",
+                          "places": 0
+                        },
+                        "hideGroupSeparator": false
+                      },
+                      "contentAlignment": "center",
+                      "displayName": " "
+                    }
+                  ]
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Quantidade por UF",
+                "showDescription": true,
+                "description": "ℹ️ Quantidade referente a primeira vez em que o cartão entrou em custódia"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 15,
+            "width": 6,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "2a772e3f",
+            "queries": [
+              {
+                "name": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a852db431614871edb70989180e8_funnel_status_finish",
+                "query": {
+                  "datasetName": "c53ce5de",
+                  "fields": [
+                    {
+                      "name": "funnel_status_finish",
+                      "expression": "`funnel_status_finish`"
+                    },
+                    {
+                      "name": "funnel_status_finish_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "funnel_status_finish",
+                    "queryName": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a852db431614871edb70989180e8_funnel_status_finish"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Status finalizadores"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 13,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "a902cc34",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "c53ce5de",
+                  "fields": [
+                    {
+                      "name": "first_reason",
+                      "expression": "`first_reason`"
+                    },
+                    {
+                      "name": "monthly(view_ref_date)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `view_ref_date`)"
+                    },
+                    {
+                      "name": "sum(cust_direto)",
+                      "expression": "SUM(`cust_direto`)"
+                    }
+                  ],
+                  "cubeGroupingSets": {
+                    "sets": [
+                      {
+                        "fieldNames": [
+                          "first_reason"
+                        ]
+                      },
+                      {
+                        "fieldNames": [
+                          "monthly(view_ref_date)"
+                        ]
+                      }
+                    ]
+                  },
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "ASC",
+                      "expression": "`first_reason`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `view_ref_date`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pivot",
+              "encodings": {
+                "rows": [
+                  {
+                    "fieldName": "first_reason",
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "cell-reversed",
+                        "field": {
+                          "index": 0
+                        }
+                      }
+                    },
+                    "displayName": "Reasons"
+                  }
+                ],
+                "columns": [
+                  {
+                    "fieldName": "monthly(view_ref_date)",
+                    "displayName": "Mês"
+                  }
+                ],
+                "cell": {
+                  "type": "multi-cell",
+                  "fields": [
+                    {
+                      "fieldName": "sum(cust_direto)",
+                      "cellType": "text",
+                      "format": {
+                        "type": "number-plain",
+                        "abbreviation": "none",
+                        "decimalPlaces": {
+                          "type": "exact",
+                          "places": 0
+                        },
+                        "hideGroupSeparator": false
+                      },
+                      "contentAlignment": "center",
+                      "displayName": " "
+                    }
+                  ]
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Quantidade por reason",
+                "showDescription": true,
+                "description": "ℹ️ Quantidade e reason referente a primeira vez em que o cartão entrou em custódia"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 24,
+            "width": 6,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "adc415fb",
+            "queries": [
+              {
+                "name": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a852db431614871edb70989180e8_region",
+                "query": {
+                  "datasetName": "c53ce5de",
+                  "fields": [
+                    {
+                      "name": "region",
+                      "expression": "`region`"
+                    },
+                    {
+                      "name": "region_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "region",
+                    "queryName": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a852db431614871edb70989180e8_region"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Região"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 13,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "35d0cb3e",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## Custódia direta\n",
+                "<p>&nbsp;</p>\n",
+                "\n",
+                "<p>&nbsp;</p>\n",
+                "\n",
+                "Funil de tudo o que produzimos e quanto que foi para a **custódia direto**\n",
+                "\n",
+                "***➡️  Em andamento:****&#32;Cartões em rota de entrega*\n",
+                "\n",
+                "***➡️  Finalizado:&#32;****&#32;&#32;Cartões com status de fragmentado ou sinistrado*"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 4,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "d372e39b",
+            "queries": [
+              {
+                "name": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a852db431614871edb70989180e8_type_delivery",
+                "query": {
+                  "datasetName": "c53ce5de",
+                  "fields": [
+                    {
+                      "name": "type_delivery",
+                      "expression": "`type_delivery`"
+                    },
+                    {
+                      "name": "type_delivery_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "type_delivery",
+                    "queryName": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a852db431614871edb70989180e8_type_delivery"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Tipo courier"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 13,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "0b4c8511",
+            "queries": [
+              {
+                "name": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a861519213dcacf42c8f22a26776_dd_card_variant",
+                "query": {
+                  "datasetName": "de34f044",
+                  "fields": [
+                    {
+                      "name": "dd_card_variant",
+                      "expression": "`dd_card_variant`"
+                    },
+                    {
+                      "name": "dd_card_variant_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a817c8ab180fa1384b26743fec16_p_card_variant",
+                "query": {
+                  "datasetName": "3c155698",
+                  "parameters": [
+                    {
+                      "name": "p_card_variant",
+                      "keyword": "p_card_variant"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a852db431614871edb70989180e8_p_card_variant",
+                "query": {
+                  "datasetName": "c53ce5de",
+                  "parameters": [
+                    {
+                      "name": "p_card_variant",
+                      "keyword": "p_card_variant"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "dd_card_variant",
+                    "queryName": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a861519213dcacf42c8f22a26776_dd_card_variant"
+                  },
+                  {
+                    "parameterName": "p_card_variant",
+                    "queryName": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a817c8ab180fa1384b26743fec16_p_card_variant"
+                  },
+                  {
+                    "parameterName": "p_card_variant",
+                    "queryName": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a852db431614871edb70989180e8_p_card_variant"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Variant"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "2127871d",
+            "queries": [
+              {
+                "name": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a852db431614871edb70989180e8_first_reason",
+                "query": {
+                  "datasetName": "c53ce5de",
+                  "fields": [
+                    {
+                      "name": "first_reason",
+                      "expression": "`first_reason`"
+                    },
+                    {
+                      "name": "first_reason_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "first_reason",
+                    "queryName": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a852db431614871edb70989180e8_first_reason"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Reason"
+              },
+              "disallowAll": false
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 14,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "4805ded9",
+            "queries": [
+              {
+                "name": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a8712b251187840767bacb188313_dd_delivery_product",
+                "query": {
+                  "datasetName": "65ca5d5f",
+                  "fields": [
+                    {
+                      "name": "dd_delivery_product",
+                      "expression": "`dd_delivery_product`"
+                    },
+                    {
+                      "name": "dd_delivery_product_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a817c8ab180fa1384b26743fec16_delivery_product",
+                "query": {
+                  "datasetName": "3c155698",
+                  "parameters": [
+                    {
+                      "name": "delivery_product",
+                      "keyword": "delivery_product"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a852db431614871edb70989180e8_delivery_product",
+                "query": {
+                  "datasetName": "c53ce5de",
+                  "parameters": [
+                    {
+                      "name": "delivery_product",
+                      "keyword": "delivery_product"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "dd_delivery_product",
+                    "queryName": "dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a8712b251187840767bacb188313_dd_delivery_product"
+                  },
+                  {
+                    "parameterName": "delivery_product",
+                    "queryName": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a817c8ab180fa1384b26743fec16_delivery_product"
+                  },
+                  {
+                    "parameterName": "delivery_product",
+                    "queryName": "parameter_dashboards/01f0a533d48f18a2a2cbe590f40e960f/datasets/01f0a852db431614871edb70989180e8_delivery_product"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Courier"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 3,
+            "width": 2,
+            "height": 1
+          }
+        },
+        {
+          "widget": {
+            "name": "29ed5be8",
+            "multilineTextboxSpec": {
+              "lines": [
+                "<span style=\"font-size:14px\">ℹ️ </span><span style=\"font-size:14px\">**Custódia direta:**</span><span style=\"font-size:14px\"> Quando o cartão entrou em custódia sem ter </span><span style=\"font-size:14px\">**pelo menos uma tentativa de entrega**</span><span style=\"font-size:14px\"> - e quais foram os status posteriores</span>"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 6,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "name": "tag_page",
+      "displayName": "tag page",
+      "layout": [
+        {
+          "widget": {
+            "name": "tags",
+            "multilineTextboxSpec": {
+              "lines": [
+                "![imagem](https://picpay-principal.cloud.databricks.com/ajax-api/2.0/fs/files/Volumes/picpay/validation/dbfs/politica_performance/botao_aprovado.png) `Aprovado - Política de Performance`"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "genieSpace": {
+      "isEnabled": false
+    }
+  }
+}
