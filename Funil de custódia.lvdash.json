@@ -130,6 +130,7 @@
       "name": "3c155698",
       "displayName": "🔸 agg - Custódia direta",
       "queryLines": [
+        "-- gui\r\n",
         "with\r\n",
         "attempt as (\r\n",
         "  select\r\n",
