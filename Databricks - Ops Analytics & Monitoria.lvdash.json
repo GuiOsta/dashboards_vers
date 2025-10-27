@@ -1,0 +1,2653 @@
+{
+  "datasets": [
+    {
+      "name": "65fc992a",
+      "displayName": "custo",
+      "queryLines": [
+        "with content as (\n",
+        "  select distinct\n",
+        "      databricks_query_history_id as origin_id\n",
+        "    , concat_ws('_', dashboard_lakeview_source_id, dashboard_source_id, notebook_id, alert_source_id, genie_space_id) as content_id\n",
+        "    , databricks_user_id\n",
+        "    , query_start_time_at - interval 3 hour as query_start_at\n",
+        "    , case\n",
+        "        when cc.source is not null then cc.source\n",
+        "        when dashboard_lakeview_source_id is not null then 'Dashboard - Lakeview'\n",
+        "        when dashboard_source_id is not null then 'Dashboard - Legacy'\n",
+        "        when notebook_id is not null then 'Notebook'\n",
+        "        when alert_source_id is not null then 'Alertas'\n",
+        "        when genie_space_id is not null then 'Genie'\n",
+        "        when databricks_user_id = '435801034309180' then 'Metaservice'\n",
+        "        else 'Demais'\n",
+        "      end as source\n",
+        "    , case\n",
+        "        when dashboard_lakeview_source_id is not null then 'https://picpay-principal.cloud.databricks.com/dashboardsv3/'|| dashboard_lakeview_source_id || '/published'\n",
+        "        when dashboard_source_id is not null then 'https://picpay-principal.cloud.databricks.com/sql/dashboards/' || dashboard_source_id\n",
+        "        when notebook_id is not null then 'https://picpay-principal.cloud.databricks.com/editor/notebooks/' || notebook_id\n",
+        "        when alert_source_id is not null then 'https://picpay-principal.cloud.databricks.com/sql/alerts/' || alert_source_id\n",
+        "        when genie_space_id is not null then 'https://picpay-principal.cloud.databricks.com/genie/rooms/' || genie_space_id\n",
+        "        else ''\n",
+        "      end as link_databricks\n",
+        "    , cc.content_name\n",
+        "  from platform_management.databricks_query_history as qh\n",
+        "  inner join delta.`s3://picpay-datalake-sandbox/cops/cops_content` as cc\n",
+        "    on   qh.dashboard_lakeview_source_id = content_id\n",
+        "      or qh.dashboard_source_id = content_id\n",
+        "      or qh.notebook_id = content_id\n",
+        "      or qh.alert_source_id = content_id\n",
+        "      or qh.genie_space_id = content_id\n",
+        "  where 1=1\n",
+        ")\n",
+        "\n",
+        ", cost_query_history as (\n",
+        "  select distinct\n",
+        "      case when :ref_day = 'Cobrança' then date(q.billing_date) else date(qh.query_start_at) end as ref_day\n",
+        "    , trim(lower(user_email)) as user_email\n",
+        "    , qh.link_databricks as content_url\n",
+        "    , qh.content_name\n",
+        "    , e.cost_center_code\n",
+        "    , nvl(f.business_unit_description, 'Não localizado') as business_unit_description\n",
+        "    , nvl(qh.source, 'Demais') as source\n",
+        "    , sum(q.databricks_dbu_cost) as databricks_dbu_cost\n",
+        "    , sum(q.databricks_cost) as databricks_cost\n",
+        "    , sum(q.aws_cost) as aws_cost\n",
+        "    , sum(q.total_cost) as total_cost\n",
+        "  from picpay.finops.queries_databricks_cost q\n",
+        "  inner join content qh\n",
+        "    using(origin_id)\n",
+        "  left join finops.dim_employees e\n",
+        "    on trim(lower(user_email)) = e.employee_email\n",
+        "  left join finops.dim_cost_center_classifications f\n",
+        "    on e.cost_center_code = f.cost_center_code\n",
+        "  where 1=1\n",
+        "    and date(q.billing_date) >= '2025-01-01' or date(qh.query_start_at) >= '2025-01-01'\n",
+        "  group by all\n",
+        ")\n",
+        "\n",
+        ", cost_jobs as (\n",
+        "  select\n",
+        "      case when :ref_day = 'Cobrança' then date(dc.billing_date) else date(jr.execution_date) end as ref_day\n",
+        "    , dc.user_email\n",
+        "    , concat('https://picpay-principal.cloud.databricks.com/jobs/', jr.job_id, '/runs/', jr.number_in_job) as content_url\n",
+        "    , coalesce(replace(jr.dag_id, 'ss_pipeline_self_service_analytics', 'SS'), jr.run_name) as content_name\n",
+        "    , dc.cost_center_code\n",
+        "    , 'Operações PF' as business_unit_description\n",
+        "    , case when notebook_path like '/qa-notebooks%' then concat(cc.source, ' Staging') else cc.source end as source\n",
+        "    , sum(dc.databricks_dbu_cost) as databricks_dbu_cost\n",
+        "    , sum(dc.databricks_cost) as databricks_cost\n",
+        "    , sum(dc.aws_cost) as aws_cost\n",
+        "    , sum(dc.total_cost) as total_cost\n",
+        "  from platform_management.databricks_job_runs jr\n",
+        "  inner join (\n",
+        "    select * from finops.job_clusters_databricks_cost\n",
+        "    qualify row_number() over (partition by cluster_id order by billing_date desc) = 1\n",
+        "    ) as dc\n",
+        "    using (cluster_id)\n",
+        "  inner join (select * from delta.`s3://picpay-datalake-sandbox/cops/cops_content` where source in ('DAG', 'Monitoria') )as cc\n",
+        "    on jr.dag_id = cc.content_id or jr.job_id = cc.content_id\n",
+        "  where 1=1\n",
+        "    and jr.execution_date >= '2025-01-01'\n",
+        "  group by all\n",
+        ")\n",
+        "\n",
+        ", cost_notebook_interactive as (\n",
+        "  select\n",
+        "    case when :ref_day = 'Cobrança' then date(ic.billing_date) else date(ic.execution_command_at) end as ref_day\n",
+        "  , user_email\n",
+        "  , 'https://picpay-principal.cloud.databricks.com/editor/notebooks/' || notebook_id as content_url\n",
+        "  , cc.content_name\n",
+        "  , cost_center_code\n",
+        "  , 'Operações PF' as business_unit_description\n",
+        "  , cc.source\n",
+        "  , sum(ic.databricks_dbu_cost) as databricks_dbu_cost\n",
+        "  , sum(ic.databricks_cost) as databricks_cost\n",
+        "  , sum(ic.aws_cost) as aws_cost\n",
+        "  , sum(ic.total_cost) as total_cost\n",
+        "  from finops.interactive_clusters_databricks_cost as ic\n",
+        "  inner join (select * from delta.`s3://picpay-datalake-sandbox/cops/cops_content` where source like some ('Monitoria%', 'Notebook%') )as cc\n",
+        "    on ic.notebook_id = cc.content_id\n",
+        "  where 1=1\n",
+        "  and date(ic.execution_command_at) >= '2025-01-01'\n",
+        "  group by all\n",
+        ")\n",
+        "\n",
+        ", all_content as (\n",
+        "  select * from cost_notebook_interactive\n",
+        "  union all\n",
+        "  select * from cost_query_history\n",
+        "  union all\n",
+        "  select * from cost_jobs\n",
+        " ) \n",
+        " \n",
+        " select * from all_content order by ref_day desc"
+      ],
+      "parameters": [
+        {
+          "displayName": "ref_day",
+          "keyword": "ref_day",
+          "dataType": "STRING",
+          "defaultSelection": {
+            "values": {
+              "dataType": "STRING",
+              "values": [
+                {
+                  "value": "Processamento"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "057e2c90",
+      "displayName": "utilização",
+      "queryLines": [
+        "with usage_qh as (\n",
+        "  select\n",
+        "      date(query_start_time_at - interval 3 hour) as ref_day\n",
+        "    , case\n",
+        "        when cc.source is not null then cc.source\n",
+        "        when dashboard_lakeview_source_id is not null then 'Dashboard - Lakeview'\n",
+        "        when dashboard_source_id is not null then 'Dashboard - Legacy'\n",
+        "        when notebook_id is not null then 'Notebook'\n",
+        "        when alert_source_id is not null then 'Alertas'\n",
+        "        when genie_space_id is not null then 'Genie'\n",
+        "        when databricks_user_id = '435801034309180' then 'Metaservice'\n",
+        "        else 'Demais'\n",
+        "      end as source\n",
+        "    , cc.content_name\n",
+        "    , trim(lower(qc.user_email)) as user_email\n",
+        "    , nvl(cct.business_unit_description, 'Não localizado') as business_unit_description\n",
+        "    , count(distinct query_start_time_at) as total_executions\n",
+        "    , count(databricks_query_history_id) as total_elements_executed\n",
+        "  from platform_management.databricks_query_history as qh\n",
+        "  inner join delta.`s3://picpay-datalake-sandbox/cops/cops_content` as cc\n",
+        "    on   qh.dashboard_lakeview_source_id = content_id\n",
+        "      or qh.dashboard_source_id = content_id\n",
+        "      or qh.notebook_id = content_id\n",
+        "      or qh.alert_source_id = content_id\n",
+        "      or qh.genie_space_id = content_id\n",
+        "      \n",
+        "  inner join (\n",
+        "    select distinct origin_id, user_email\n",
+        "    from finops.queries_databricks_cost\n",
+        "  ) as qc\n",
+        "    on qh.databricks_query_history_id = qc.origin_id\n",
+        "  left join finops.dim_employees as emp\n",
+        "    on trim(lower(qc.user_email)) = emp.employee_email\n",
+        "  left join finops.dim_cost_center_classifications as cct\n",
+        "    on emp.cost_center_code = cct.cost_center_code\n",
+        "  where 1=1\n",
+        "    and query_text not like 'DESCRIBE QUERY%'\n",
+        "    and date(qh.query_start_time_at) >= '2025-01-01'\n",
+        "  group by all\n",
+        ")\n",
+        "\n",
+        ", usage_jobs as (\n",
+        "  select\n",
+        "      date(jr.execution_date) as ref_day\n",
+        "    , case when notebook_path like '/qa-notebooks%' then concat(cc.source, ' Staging') else cc.source end as source\n",
+        "    , coalesce(replace(jr.dag_id, 'ss_pipeline_self_service_analytics', 'SS'), jr.run_name) as content_name\n",
+        "    , dc.user_email\n",
+        "    , 'Operações PF' as business_unit_description\n",
+        "    , count(distinct jr.job_id) as total_executions\n",
+        "    , count(distinct jr.job_id) as total_elements_executed\n",
+        "  from platform_management.databricks_job_runs jr\n",
+        "  inner join (\n",
+        "    select * from finops.job_clusters_databricks_cost\n",
+        "    qualify row_number() over (partition by cluster_id order by billing_date desc) = 1\n",
+        "    ) as dc\n",
+        "    using (cluster_id)\n",
+        "  inner join (select * from delta.`s3://picpay-datalake-sandbox/cops/cops_content` where source in ('DAG', 'Monitoria') )as cc\n",
+        "    on jr.dag_id = cc.content_id or jr.job_id = cc.content_id\n",
+        "  where 1=1\n",
+        "    and jr.execution_date >= '2025-01-01'\n",
+        "  group by all\n",
+        ")\n",
+        "\n",
+        ", usage_notebook_interactive as (\n",
+        "  select\n",
+        "      date(nb.executed_at) as ref_day\n",
+        "    , cc.source as source\n",
+        "    , cc.content_name\n",
+        "    , ic.user_email\n",
+        "    , nvl(cct.business_unit_description, 'Não localizado') as business_unit_description\n",
+        "    , count(distinct nb.databricks_notebook_command_execution_id) as total_executions\n",
+        "    , count(distinct nb.databricks_notebook_command_execution_id) as total_elements_executed\n",
+        "  from data_governance.databricks_notebooks_commands_executions as nb\n",
+        "  inner join\n",
+        "    (select * from delta.`s3://picpay-datalake-sandbox/cops/cops_content` where source like some ('Notebook%', 'Monitoria%')) as cc\n",
+        "    on nb.notebook_id = cc.content_id\n",
+        "  inner join (\n",
+        "    select\n",
+        "      origin_id, user_email, notebook_id, command_id, execution_command_at from finops.interactive_clusters_databricks_cost\n",
+        "  ) as ic\n",
+        "    -- on nb.databricks_notebook_command_execution_id = ic.origin_id and nb.notebook_id = ic.notebook_id\n",
+        "    on nb.command_id = ic.command_id and nb.notebook_id = ic.notebook_id and nb.executed_at = ic.execution_command_at and nb.user_email = sha2(ic.user_email, 256)\n",
+        "  left join finops.dim_employees as emp\n",
+        "    on ic.user_email = emp.employee_email\n",
+        "  left join finops.dim_cost_center_classifications as cct\n",
+        "    on emp.cost_center_code = cct.cost_center_code\n",
+        "  where 1=1\n",
+        "    and date(nb.executed_at) >= '2025-01-01'\n",
+        "  group by all\n",
+        ")\n",
+        "\n",
+        ", all_content as (\n",
+        "  select * from usage_qh\n",
+        "  union all\n",
+        "  select * from usage_notebook_interactive\n",
+        "  union all\n",
+        "  select * from usage_jobs order by ref_day desc\n",
+        ")\n",
+        "\n",
+        "select * from all_content"
+      ]
+    },
+    {
+      "name": "1d1a6fd3",
+      "displayName": "conteúdos",
+      "queryLines": [
+        "with content_qh as (\n",
+        "  select\n",
+        "    distinct\n",
+        "      case\n",
+        "        when cc.source is not null then cc.source\n",
+        "        when dashboard_lakeview_source_id is not null then 'Dashboard - Lakeview'\n",
+        "        when dashboard_source_id is not null then 'Dashboard - Legacy'\n",
+        "        when notebook_id is not null then 'Notebook'\n",
+        "        when alert_source_id is not null then 'Alertas'\n",
+        "        when genie_space_id is not null then 'Genie'\n",
+        "        when databricks_user_id = '435801034309180' then 'Metaservice'\n",
+        "        else 'Demais'\n",
+        "      end as source\n",
+        "    , case\n",
+        "        when dashboard_lakeview_source_id is not null then 'https://picpay-principal.cloud.databricks.com/dashboardsv3/'|| dashboard_lakeview_source_id || '/published'\n",
+        "        when dashboard_source_id is not null then 'https://picpay-principal.cloud.databricks.com/sql/dashboards/' || dashboard_source_id\n",
+        "        when notebook_id is not null then 'https://picpay-principal.cloud.databricks.com/editor/notebooks/' || notebook_id\n",
+        "        when alert_source_id is not null then 'https://picpay-principal.cloud.databricks.com/sql/alerts/' || alert_source_id\n",
+        "        when genie_space_id is not null then 'https://picpay-principal.cloud.databricks.com/genie/rooms/' || genie_space_id\n",
+        "        else ''\n",
+        "      end as link_databricks\n",
+        "    , cc.content_name\n",
+        "  from platform_management.databricks_query_history as qh\n",
+        "  inner join delta.`s3://picpay-datalake-sandbox/cops/cops_content` as cc\n",
+        "    on qh.dashboard_lakeview_source_id = content_id or qh.dashboard_source_id = content_id or qh.notebook_id = content_id\n",
+        ")\n",
+        "\n",
+        ", content_jobs as (\n",
+        "  select distinct\n",
+        "      case when notebook_path like '/qa-notebooks%' then concat(cc.source, ' Staging') else cc.source end as source\n",
+        "    , concat('https://picpay-principal.cloud.databricks.com/jobs/', jr.job_id, '/runs/', jr.number_in_job) as link_databricks\n",
+        "    , coalesce(replace(jr.dag_id, 'ss_pipeline_self_service_analytics', 'SS'), jr.run_name) as content_name\n",
+        "  from platform_management.databricks_job_runs jr\n",
+        "  inner join (select * from delta.`s3://picpay-datalake-sandbox/cops/cops_content` where source in ('DAG', 'Monitoria') )as cc\n",
+        "    on jr.dag_id = cc.content_id or jr.job_id = cc.content_id\n",
+        "  qualify row_number() over (partition by coalesce(replace(jr.dag_id, 'ss_pipeline_self_service_analytics', 'SS'), jr.run_name) order by date(jr.execution_date) desc) = 1\n",
+        ")\n",
+        "\n",
+        "select * from content_qh\n",
+        "union all\n",
+        "select * from content_jobs"
+      ]
+    },
+    {
+      "name": "fadb5b5d",
+      "displayName": "dd_ref_day",
+      "queryLines": [
+        "select\n",
+        "  *\n",
+        "from\n",
+        "  (\n",
+        "    values\n",
+        "    ('Cobrança'),\n",
+        "    ('Processamento')\n",
+        ") as data(dd_ref_day)"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "9b123c77",
+      "displayName": "Custo",
+      "layout": [
+        {
+          "widget": {
+            "name": "3281ad0e",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "65fc992a",
+                  "fields": [
+                    {
+                      "name": "source",
+                      "expression": "`source`"
+                    },
+                    {
+                      "name": "monthly(ref_day)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `ref_day`)"
+                    },
+                    {
+                      "name": "sum(total_cost)",
+                      "expression": "SUM(`total_cost`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "monthly(ref_day)",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  },
+                  "displayName": "ref_day"
+                },
+                "y": {
+                  "fieldName": "sum(total_cost)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number-currency",
+                    "currencyCode": "USD",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  },
+                  "displayName": "Custo total"
+                },
+                "color": {
+                  "fieldName": "source",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "legend": {
+                    "title": "Origem",
+                    "position": "bottom"
+                  },
+                  "displayName": "Origem"
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "title": "Custo Databricks por Origem\n",
+                "showTitle": true
+              },
+              "mark": {
+                "layout": "percent-stack"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 3,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "5ec95b60",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "65fc992a",
+                  "fields": [
+                    {
+                      "name": "content_name",
+                      "expression": "`content_name`"
+                    },
+                    {
+                      "name": "monthly(ref_day)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `ref_day`)"
+                    },
+                    {
+                      "name": "sum(total_cost)",
+                      "expression": "SUM(`total_cost`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "monthly(ref_day)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  },
+                  "displayName": "ref_day"
+                },
+                "y": {
+                  "fieldName": "sum(total_cost)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number-currency",
+                    "currencyCode": "USD",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  },
+                  "displayName": "Sum of total_cost"
+                },
+                "color": {
+                  "fieldName": "content_name",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "legend": {
+                    "title": "Conteúdo"
+                  },
+                  "displayName": "Conteúdo"
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "title": "Custo Mensal",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 3,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "4006f416",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "65fc992a",
+                  "fields": [
+                    {
+                      "name": "content_name",
+                      "expression": "`content_name`"
+                    },
+                    {
+                      "name": "ref_day",
+                      "expression": "`ref_day`"
+                    },
+                    {
+                      "name": "sum(total_cost)",
+                      "expression": "SUM(`total_cost`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "ref_day",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  },
+                  "displayName": "ref_day"
+                },
+                "y": {
+                  "fieldName": "sum(total_cost)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number-currency",
+                    "currencyCode": "USD",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  },
+                  "displayName": "Sum of total_cost"
+                },
+                "color": {
+                  "fieldName": "content_name",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "displayName": "content_name"
+                },
+                "label": {
+                  "show": false
+                }
+              },
+              "frame": {
+                "title": "Custo Diário",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 9,
+            "width": 3,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "f1cf2aad",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "65fc992a",
+                  "fields": [
+                    {
+                      "name": "content_name",
+                      "expression": "`content_name`"
+                    },
+                    {
+                      "name": "weekly(ref_day)",
+                      "expression": "DATE_TRUNC(\"WEEK\", `ref_day`)"
+                    },
+                    {
+                      "name": "sum(total_cost)",
+                      "expression": "SUM(`total_cost`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "weekly(ref_day)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  },
+                  "displayName": "ref_day"
+                },
+                "y": {
+                  "fieldName": "sum(total_cost)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number-currency",
+                    "currencyCode": "USD",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  },
+                  "displayName": "Sum of total_cost"
+                },
+                "color": {
+                  "fieldName": "content_name",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "legend": {
+                    "title": "Conteúdo"
+                  },
+                  "displayName": "Conteúdo"
+                },
+                "label": {
+                  "show": false
+                }
+              },
+              "frame": {
+                "title": "Custo Semanal\n",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 13,
+            "width": 3,
+            "height": 4
+          }
+        },
+        {
+          "widget": {
+            "name": "ef1ad6a9",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# 💰 Custo"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "a7a3cc5c",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "1d1a6fd3",
+                  "fields": [
+                    {
+                      "name": "source",
+                      "expression": "`source`"
+                    },
+                    {
+                      "name": "content_name",
+                      "expression": "`content_name`"
+                    },
+                    {
+                      "name": "link_databricks",
+                      "expression": "`link_databricks`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "source",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 0,
+                    "title": "source",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "content_name",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 1,
+                    "title": "content_name",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "link_databricks",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "link",
+                    "visible": true,
+                    "order": 2,
+                    "title": "link_databricks",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "allowHTMLByDefault": false,
+              "itemsPerPage": 25,
+              "paginationSize": "default",
+              "condensed": true,
+              "withRowNumber": false
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 17,
+            "width": 6,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "c636c2c8",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "65fc992a",
+                  "fields": [
+                    {
+                      "name": "ref_day",
+                      "expression": "`ref_day`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "ref_day",
+                  "displayName": "ref_day"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Data mais recente"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 0,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c75de5eb",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "65fc992a",
+                  "fields": [
+                    {
+                      "name": "sum(total_cost)",
+                      "expression": "SUM(`total_cost`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(total_cost)",
+                  "format": {
+                    "type": "number-currency",
+                    "currencyCode": "USD",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    },
+                    "hideGroupSeparator": false
+                  },
+                  "displayName": "Sum of total_cost"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Custo total"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "bcb69ed0",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "65fc992a",
+                  "fields": [
+                    {
+                      "name": "count(total_cost)",
+                      "expression": "COUNT(`total_cost`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "count(total_cost)",
+                  "format": {
+                    "type": "number-plain",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    },
+                    "hideGroupSeparator": false
+                  },
+                  "displayName": "Count of total_cost"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Utilizações únicas por usuário"
+              }
+            }
+          },
+          "position": {
+            "x": 2,
+            "y": 0,
+            "width": 2,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "4814ca69",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "65fc992a",
+                  "fields": [
+                    {
+                      "name": "monthly(ref_day)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `ref_day`)"
+                    },
+                    {
+                      "name": "sum(total_cost)",
+                      "expression": "SUM(`total_cost`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "monthly(ref_day)",
+                  "scale": {
+                    "type": "temporal"
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  },
+                  "displayName": "ref_day"
+                },
+                "y": {
+                  "fieldName": "sum(total_cost)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number-currency",
+                    "currencyCode": "USD",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  },
+                  "displayName": "Sum of total_cost"
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "title": "Custo Mensal",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "551ffefb",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "65fc992a",
+                  "fields": [
+                    {
+                      "name": "sum(total_cost)",
+                      "expression": "SUM(`total_cost`)"
+                    },
+                    {
+                      "name": "content_name",
+                      "expression": "`content_name`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "sum(total_cost)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Custo total"
+                },
+                "color": {
+                  "fieldName": "content_name",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "legend": {
+                    "title": "Conteúdo"
+                  },
+                  "displayName": "Conteúdo"
+                }
+              },
+              "frame": {
+                "title": "Custo Databricks por Conteúdo\n",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 4,
+            "width": 3,
+            "height": 5
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "name": "2263fbb5",
+      "displayName": "Utilização",
+      "layout": [
+        {
+          "widget": {
+            "name": "cc97806e",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "65fc992a",
+                  "fields": [
+                    {
+                      "name": "user_email",
+                      "expression": "`user_email`"
+                    },
+                    {
+                      "name": "monthly(ref_day)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `ref_day`)"
+                    },
+                    {
+                      "name": "countdistinct(content_name)",
+                      "expression": "COUNT(DISTINCT `content_name`)"
+                    }
+                  ],
+                  "cubeGroupingSets": {
+                    "sets": [
+                      {
+                        "fieldNames": [
+                          "user_email"
+                        ]
+                      },
+                      {
+                        "fieldNames": [
+                          "monthly(ref_day)"
+                        ]
+                      }
+                    ]
+                  },
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "ASC",
+                      "expression": "`user_email`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `ref_day`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pivot",
+              "encodings": {
+                "rows": [
+                  {
+                    "fieldName": "user_email",
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "cell-reversed",
+                        "field": {
+                          "index": 0
+                        }
+                      }
+                    }
+                  }
+                ],
+                "columns": [
+                  {
+                    "fieldName": "monthly(ref_day)",
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "natural-order-reversed"
+                      }
+                    },
+                    "displayName": "Mês"
+                  }
+                ],
+                "cell": {
+                  "type": "multi-cell",
+                  "fields": [
+                    {
+                      "fieldName": "countdistinct(content_name)",
+                      "cellType": "text",
+                      "format": {
+                        "type": "number-plain",
+                        "abbreviation": "none",
+                        "decimalPlaces": {
+                          "type": "exact",
+                          "places": 0
+                        },
+                        "hideGroupSeparator": true
+                      },
+                      "displayName": " "
+                    }
+                  ],
+                  "width": 75
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "1️⃣ Conteúdos únicos consumidos - Visão Mensal"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 32,
+            "width": 3,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "a76d5296",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "65fc992a",
+                  "fields": [
+                    {
+                      "name": "user_email",
+                      "expression": "`user_email`"
+                    },
+                    {
+                      "name": "ref_day",
+                      "expression": "`ref_day`"
+                    },
+                    {
+                      "name": "countdistinct(content_name)",
+                      "expression": "COUNT(DISTINCT `content_name`)"
+                    }
+                  ],
+                  "cubeGroupingSets": {
+                    "sets": [
+                      {
+                        "fieldNames": [
+                          "user_email"
+                        ]
+                      },
+                      {
+                        "fieldNames": [
+                          "ref_day"
+                        ]
+                      }
+                    ]
+                  },
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "ASC",
+                      "expression": "`user_email`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "`ref_day`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pivot",
+              "encodings": {
+                "rows": [
+                  {
+                    "fieldName": "user_email",
+                    "displayTotal": false,
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "cell-reversed",
+                        "field": {
+                          "index": 0
+                        }
+                      }
+                    }
+                  }
+                ],
+                "columns": [
+                  {
+                    "fieldName": "ref_day",
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "natural-order-reversed"
+                      }
+                    },
+                    "displayName": "Dia"
+                  }
+                ],
+                "cell": {
+                  "type": "multi-cell",
+                  "fields": [
+                    {
+                      "fieldName": "countdistinct(content_name)",
+                      "cellType": "text",
+                      "format": {
+                        "type": "number-plain",
+                        "abbreviation": "none",
+                        "decimalPlaces": {
+                          "type": "exact",
+                          "places": 0
+                        },
+                        "hideGroupSeparator": true
+                      },
+                      "displayName": " "
+                    }
+                  ],
+                  "width": 100
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "1️⃣ Conteúdos únicos consumidos - Visão Diária"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 32,
+            "width": 3,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "6191fad3",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# 👥 Utilização por usuário\n",
+                "Considera se a pessoa `abriu` o dashboard `e` gerou alguma exeção no databricks"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 30,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "9699416b",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "057e2c90",
+                  "fields": [
+                    {
+                      "name": "source",
+                      "expression": "`source`"
+                    },
+                    {
+                      "name": "content_name",
+                      "expression": "`content_name`"
+                    },
+                    {
+                      "name": "ref_day",
+                      "expression": "`ref_day`"
+                    },
+                    {
+                      "name": "countdistinct(user_email)",
+                      "expression": "COUNT(DISTINCT `user_email`)"
+                    }
+                  ],
+                  "cubeGroupingSets": {
+                    "sets": [
+                      {
+                        "fieldNames": [
+                          "source",
+                          "content_name"
+                        ]
+                      },
+                      {
+                        "fieldNames": [
+                          "ref_day"
+                        ]
+                      }
+                    ]
+                  },
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "ASC",
+                      "expression": "`source`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "`content_name`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "`ref_day`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pivot",
+              "encodings": {
+                "rows": [
+                  {
+                    "fieldName": "source"
+                  },
+                  {
+                    "fieldName": "content_name",
+                    "headerWidth": 300,
+                    "displayTotal": false
+                  }
+                ],
+                "columns": [
+                  {
+                    "fieldName": "ref_day",
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "natural-order-reversed"
+                      }
+                    },
+                    "displayName": "Dia"
+                  }
+                ],
+                "cell": {
+                  "type": "multi-cell",
+                  "fields": [
+                    {
+                      "fieldName": "countdistinct(user_email)",
+                      "cellType": "text",
+                      "format": {
+                        "type": "number-plain",
+                        "abbreviation": "none",
+                        "decimalPlaces": {
+                          "type": "exact",
+                          "places": 0
+                        },
+                        "hideGroupSeparator": true
+                      },
+                      "displayName": " "
+                    }
+                  ],
+                  "width": 100
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "1️⃣ Quantidade de pessoas que utilizaram por DIA"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "6048f722",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# 📊 <span style=\"font-family: Tahoma;font-size: 36px;line-height: 1.5;\">Conteúdos</span>"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "7eaf0b4f",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "1d1a6fd3",
+                  "fields": [
+                    {
+                      "name": "source",
+                      "expression": "`source`"
+                    },
+                    {
+                      "name": "content_name",
+                      "expression": "`content_name`"
+                    },
+                    {
+                      "name": "link_databricks",
+                      "expression": "`link_databricks`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "source",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 0,
+                    "title": "source",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "content_name",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "string",
+                    "visible": true,
+                    "order": 1,
+                    "title": "content_name",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  },
+                  {
+                    "fieldName": "link_databricks",
+                    "booleanValues": [
+                      "false",
+                      "true"
+                    ],
+                    "imageUrlTemplate": "{{ @ }}",
+                    "imageTitleTemplate": "{{ @ }}",
+                    "imageWidth": "",
+                    "imageHeight": "",
+                    "linkUrlTemplate": "{{ @ }}",
+                    "linkTextTemplate": "{{ @ }}",
+                    "linkTitleTemplate": "{{ @ }}",
+                    "linkOpenInNewTab": true,
+                    "type": "string",
+                    "displayAs": "link",
+                    "visible": true,
+                    "order": 2,
+                    "title": "link_databricks",
+                    "allowSearch": false,
+                    "alignContent": "left",
+                    "allowHTML": false,
+                    "highlightLinks": false,
+                    "useMonospaceFont": false,
+                    "preserveWhitespace": false
+                  }
+                ]
+              },
+              "invisibleColumns": [],
+              "allowHTMLByDefault": false,
+              "itemsPerPage": 25,
+              "paginationSize": "default",
+              "condensed": true,
+              "withRowNumber": false
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 48,
+            "width": 6,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "ec22c246",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "057e2c90",
+                  "fields": [
+                    {
+                      "name": "user_email",
+                      "expression": "`user_email`"
+                    },
+                    {
+                      "name": "monthly(ref_day)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `ref_day`)"
+                    },
+                    {
+                      "name": "sum(total_executions)",
+                      "expression": "SUM(`total_executions`)"
+                    }
+                  ],
+                  "cubeGroupingSets": {
+                    "sets": [
+                      {
+                        "fieldNames": [
+                          "user_email"
+                        ]
+                      },
+                      {
+                        "fieldNames": [
+                          "monthly(ref_day)"
+                        ]
+                      }
+                    ]
+                  },
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "ASC",
+                      "expression": "`user_email`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `ref_day`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pivot",
+              "encodings": {
+                "rows": [
+                  {
+                    "fieldName": "user_email",
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "natural-order-reversed"
+                      }
+                    }
+                  }
+                ],
+                "columns": [
+                  {
+                    "fieldName": "monthly(ref_day)",
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "natural-order-reversed"
+                      }
+                    },
+                    "displayName": "Mês"
+                  }
+                ],
+                "cell": {
+                  "type": "multi-cell",
+                  "fields": [
+                    {
+                      "fieldName": "sum(total_executions)",
+                      "cellType": "text",
+                      "format": {
+                        "type": "number-plain",
+                        "abbreviation": "none",
+                        "decimalPlaces": {
+                          "type": "exact",
+                          "places": 0
+                        },
+                        "hideGroupSeparator": true
+                      },
+                      "displayName": " "
+                    }
+                  ],
+                  "width": 75
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "🔂 Total de EXECUÇÕES por usuário mensal",
+                "showDescription": true,
+                "description": "Para monitorias/notebooks interativos está a quantidade de comandos executados, pois não tem a separação por quantos \"Run All\" foram executados"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 40,
+            "width": 3,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "c4f8ace2",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "057e2c90",
+                  "fields": [
+                    {
+                      "name": "user_email",
+                      "expression": "`user_email`"
+                    },
+                    {
+                      "name": "ref_day",
+                      "expression": "`ref_day`"
+                    },
+                    {
+                      "name": "sum(total_executions)",
+                      "expression": "SUM(`total_executions`)"
+                    }
+                  ],
+                  "cubeGroupingSets": {
+                    "sets": [
+                      {
+                        "fieldNames": [
+                          "user_email"
+                        ]
+                      },
+                      {
+                        "fieldNames": [
+                          "ref_day"
+                        ]
+                      }
+                    ]
+                  },
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "ASC",
+                      "expression": "`user_email`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "`ref_day`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pivot",
+              "encodings": {
+                "rows": [
+                  {
+                    "fieldName": "user_email",
+                    "displayTotal": false,
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "cell-reversed",
+                        "field": {
+                          "index": 0
+                        }
+                      }
+                    }
+                  }
+                ],
+                "columns": [
+                  {
+                    "fieldName": "ref_day",
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "natural-order-reversed"
+                      }
+                    },
+                    "displayName": "Dia"
+                  }
+                ],
+                "cell": {
+                  "type": "multi-cell",
+                  "fields": [
+                    {
+                      "fieldName": "sum(total_executions)",
+                      "cellType": "text",
+                      "format": {
+                        "type": "number-plain",
+                        "abbreviation": "none",
+                        "decimalPlaces": {
+                          "type": "exact",
+                          "places": 0
+                        },
+                        "hideGroupSeparator": true
+                      },
+                      "displayName": " "
+                    }
+                  ],
+                  "width": 100
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "🔂 Total de EXECUÇÕES por usuário diária",
+                "showDescription": true,
+                "description": "Para monitorias/notebooks interativos está a quantidade de comandos executados, pois não tem a separação por quantos \"Run All\" foram executados"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 40,
+            "width": 3,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "2b393b98",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "057e2c90",
+                  "fields": [
+                    {
+                      "name": "content_name",
+                      "expression": "`content_name`"
+                    },
+                    {
+                      "name": "ref_day",
+                      "expression": "`ref_day`"
+                    },
+                    {
+                      "name": "sum(total_executions)",
+                      "expression": "SUM(`total_executions`)"
+                    }
+                  ],
+                  "cubeGroupingSets": {
+                    "sets": [
+                      {
+                        "fieldNames": [
+                          "content_name"
+                        ]
+                      },
+                      {
+                        "fieldNames": [
+                          "ref_day"
+                        ]
+                      }
+                    ]
+                  },
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "ASC",
+                      "expression": "`content_name`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "`ref_day`"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pivot",
+              "encodings": {
+                "rows": [
+                  {
+                    "fieldName": "content_name",
+                    "displayTotal": false,
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "cell-reversed",
+                        "field": {
+                          "index": 0
+                        }
+                      }
+                    },
+                    "headerWidth": 300
+                  }
+                ],
+                "columns": [
+                  {
+                    "fieldName": "ref_day",
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "natural-order-reversed"
+                      }
+                    },
+                    "displayName": "Dia"
+                  }
+                ],
+                "cell": {
+                  "type": "multi-cell",
+                  "fields": [
+                    {
+                      "fieldName": "sum(total_executions)",
+                      "cellType": "text",
+                      "format": {
+                        "type": "number-plain",
+                        "abbreviation": "none",
+                        "decimalPlaces": {
+                          "type": "exact",
+                          "places": 0
+                        },
+                        "hideGroupSeparator": true
+                      },
+                      "displayName": " "
+                    }
+                  ],
+                  "width": 100
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "🔂 Total de Execuções por DIA",
+                "showDescription": true,
+                "description": "Para monitorias/notebooks interativos está a quantidade de comandos executados, pois não tem a separação por quantos \"Run All\" foram executados"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 16,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "aee2fabc",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "057e2c90",
+                  "fields": [
+                    {
+                      "name": "source",
+                      "expression": "`source`"
+                    },
+                    {
+                      "name": "content_name",
+                      "expression": "`content_name`"
+                    },
+                    {
+                      "name": "monthly(ref_day)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `ref_day`)"
+                    },
+                    {
+                      "name": "countdistinct(user_email)",
+                      "expression": "COUNT(DISTINCT `user_email`)"
+                    }
+                  ],
+                  "cubeGroupingSets": {
+                    "sets": [
+                      {
+                        "fieldNames": [
+                          "source",
+                          "content_name"
+                        ]
+                      },
+                      {
+                        "fieldNames": [
+                          "monthly(ref_day)"
+                        ]
+                      }
+                    ]
+                  },
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "ASC",
+                      "expression": "`source`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "`content_name`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `ref_day`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pivot",
+              "encodings": {
+                "rows": [
+                  {
+                    "fieldName": "source",
+                    "displayTotal": false
+                  },
+                  {
+                    "fieldName": "content_name",
+                    "headerWidth": 300
+                  }
+                ],
+                "columns": [
+                  {
+                    "fieldName": "monthly(ref_day)",
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "natural-order-reversed"
+                      }
+                    },
+                    "displayName": "Mês"
+                  }
+                ],
+                "cell": {
+                  "type": "multi-cell",
+                  "fields": [
+                    {
+                      "fieldName": "countdistinct(user_email)",
+                      "cellType": "text",
+                      "format": {
+                        "type": "number-plain",
+                        "abbreviation": "none",
+                        "decimalPlaces": {
+                          "type": "exact",
+                          "places": 0
+                        },
+                        "hideGroupSeparator": true
+                      },
+                      "displayName": " "
+                    }
+                  ],
+                  "width": 100
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "1️⃣ Quantidade de pessoas que utilizaram por MÊS"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 9,
+            "width": 6,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "999c7df7",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "057e2c90",
+                  "fields": [
+                    {
+                      "name": "content_name",
+                      "expression": "`content_name`"
+                    },
+                    {
+                      "name": "monthly(ref_day)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `ref_day`)"
+                    },
+                    {
+                      "name": "sum(total_executions)",
+                      "expression": "SUM(`total_executions`)"
+                    }
+                  ],
+                  "cubeGroupingSets": {
+                    "sets": [
+                      {
+                        "fieldNames": [
+                          "content_name"
+                        ]
+                      },
+                      {
+                        "fieldNames": [
+                          "monthly(ref_day)"
+                        ]
+                      }
+                    ]
+                  },
+                  "disaggregated": false,
+                  "orders": [
+                    {
+                      "direction": "ASC",
+                      "expression": "`content_name`"
+                    },
+                    {
+                      "direction": "ASC",
+                      "expression": "DATE_TRUNC(\"MONTH\", `ref_day`)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pivot",
+              "encodings": {
+                "rows": [
+                  {
+                    "fieldName": "content_name",
+                    "displayTotal": false,
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "cell-reversed",
+                        "field": {
+                          "index": 0
+                        }
+                      }
+                    },
+                    "headerWidth": 300
+                  }
+                ],
+                "columns": [
+                  {
+                    "fieldName": "monthly(ref_day)",
+                    "scale": {
+                      "type": "categorical",
+                      "sort": {
+                        "by": "natural-order-reversed"
+                      }
+                    },
+                    "displayName": "Dia"
+                  }
+                ],
+                "cell": {
+                  "type": "multi-cell",
+                  "fields": [
+                    {
+                      "fieldName": "sum(total_executions)",
+                      "cellType": "text",
+                      "format": {
+                        "type": "number-plain",
+                        "abbreviation": "none",
+                        "decimalPlaces": {
+                          "type": "exact",
+                          "places": 0
+                        },
+                        "hideGroupSeparator": true
+                      },
+                      "displayName": " "
+                    }
+                  ],
+                  "width": 100
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "🔂 Total de Execuções por MÊS"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 23,
+            "width": 6,
+            "height": 7
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "name": "dcc7b241",
+      "displayName": "Global Filters",
+      "layout": [
+        {
+          "widget": {
+            "name": "2325bee4",
+            "queries": [
+              {
+                "name": "dashboards/01f032912486139da7554b9400460604/datasets/01f07c1796d319cbbf1f9531e3c0ccc4_ref_day",
+                "query": {
+                  "datasetName": "65fc992a",
+                  "fields": [
+                    {
+                      "name": "ref_day",
+                      "expression": "`ref_day`"
+                    },
+                    {
+                      "name": "ref_day_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f032912486139da7554b9400460604/datasets/01f09e26db6a1838a269202c7d8d8aa2_ref_day",
+                "query": {
+                  "datasetName": "057e2c90",
+                  "fields": [
+                    {
+                      "name": "ref_day",
+                      "expression": "`ref_day`"
+                    },
+                    {
+                      "name": "ref_day_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "ref_day",
+                    "queryName": "dashboards/01f032912486139da7554b9400460604/datasets/01f07c1796d319cbbf1f9531e3c0ccc4_ref_day"
+                  },
+                  {
+                    "fieldName": "ref_day",
+                    "queryName": "dashboards/01f032912486139da7554b9400460604/datasets/01f09e26db6a1838a269202c7d8d8aa2_ref_day"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Período"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "1dad99b5",
+            "queries": [
+              {
+                "name": "dashboards/01f032912486139da7554b9400460604/datasets/01f07c1796d31a649efb4fa29aafc69b_dd_ref_day",
+                "query": {
+                  "datasetName": "fadb5b5d",
+                  "fields": [
+                    {
+                      "name": "dd_ref_day",
+                      "expression": "`dd_ref_day`"
+                    },
+                    {
+                      "name": "dd_ref_day_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-single-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "dd_ref_day",
+                    "queryName": "dashboards/01f032912486139da7554b9400460604/datasets/01f07c1796d31a649efb4fa29aafc69b_dd_ref_day"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Data Referência"
+              },
+              "disallowAll": true,
+              "selection": {
+                "defaultSelection": {
+                  "values": {
+                    "dataType": "STRING",
+                    "values": [
+                      {
+                        "value": "Processamento"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "b619f87a",
+            "queries": [
+              {
+                "name": "dashboards/01f032912486139da7554b9400460604/datasets/01f07c1796d319cbbf1f9531e3c0ccc4_business_unit_description",
+                "query": {
+                  "datasetName": "65fc992a",
+                  "fields": [
+                    {
+                      "name": "business_unit_description",
+                      "expression": "`business_unit_description`"
+                    },
+                    {
+                      "name": "business_unit_description_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f032912486139da7554b9400460604/datasets/01f09e26db6a1838a269202c7d8d8aa2_business_unit_description",
+                "query": {
+                  "datasetName": "057e2c90",
+                  "fields": [
+                    {
+                      "name": "business_unit_description",
+                      "expression": "`business_unit_description`"
+                    },
+                    {
+                      "name": "business_unit_description_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "business_unit_description",
+                    "queryName": "dashboards/01f032912486139da7554b9400460604/datasets/01f07c1796d319cbbf1f9531e3c0ccc4_business_unit_description"
+                  },
+                  {
+                    "fieldName": "business_unit_description",
+                    "queryName": "dashboards/01f032912486139da7554b9400460604/datasets/01f09e26db6a1838a269202c7d8d8aa2_business_unit_description"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "BU"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "5bdd0427",
+            "queries": [
+              {
+                "name": "dashboards/01f032912486139da7554b9400460604/datasets/01f07c1796d319cbbf1f9531e3c0ccc4_user_email",
+                "query": {
+                  "datasetName": "65fc992a",
+                  "fields": [
+                    {
+                      "name": "user_email",
+                      "expression": "`user_email`"
+                    },
+                    {
+                      "name": "user_email_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f032912486139da7554b9400460604/datasets/01f09e26db6a1838a269202c7d8d8aa2_user_email",
+                "query": {
+                  "datasetName": "057e2c90",
+                  "fields": [
+                    {
+                      "name": "user_email",
+                      "expression": "`user_email`"
+                    },
+                    {
+                      "name": "user_email_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "user_email",
+                    "queryName": "dashboards/01f032912486139da7554b9400460604/datasets/01f07c1796d319cbbf1f9531e3c0ccc4_user_email"
+                  },
+                  {
+                    "fieldName": "user_email",
+                    "queryName": "dashboards/01f032912486139da7554b9400460604/datasets/01f09e26db6a1838a269202c7d8d8aa2_user_email"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Usuário"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "8f477824",
+            "queries": [
+              {
+                "name": "dashboards/01f032912486139da7554b9400460604/datasets/01f07c1796d319cbbf1f9531e3c0ccc4_source",
+                "query": {
+                  "datasetName": "65fc992a",
+                  "fields": [
+                    {
+                      "name": "source",
+                      "expression": "`source`"
+                    },
+                    {
+                      "name": "source_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f032912486139da7554b9400460604/datasets/01f09e26db6a1838a269202c7d8d8aa2_source",
+                "query": {
+                  "datasetName": "057e2c90",
+                  "fields": [
+                    {
+                      "name": "source",
+                      "expression": "`source`"
+                    },
+                    {
+                      "name": "source_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "source",
+                    "queryName": "dashboards/01f032912486139da7554b9400460604/datasets/01f07c1796d319cbbf1f9531e3c0ccc4_source"
+                  },
+                  {
+                    "fieldName": "source",
+                    "queryName": "dashboards/01f032912486139da7554b9400460604/datasets/01f09e26db6a1838a269202c7d8d8aa2_source"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Origem"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 8,
+            "width": 1,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "25642e46",
+            "queries": [
+              {
+                "name": "dashboards/01f032912486139da7554b9400460604/datasets/01f07c1796d319cbbf1f9531e3c0ccc4_content_name",
+                "query": {
+                  "datasetName": "65fc992a",
+                  "fields": [
+                    {
+                      "name": "content_name",
+                      "expression": "`content_name`"
+                    },
+                    {
+                      "name": "content_name_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f032912486139da7554b9400460604/datasets/01f09e26db6a1838a269202c7d8d8aa2_content_name",
+                "query": {
+                  "datasetName": "057e2c90",
+                  "fields": [
+                    {
+                      "name": "content_name",
+                      "expression": "`content_name`"
+                    },
+                    {
+                      "name": "content_name_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "dashboards/01f032912486139da7554b9400460604/datasets/01f07c1796d31a478ddd474d7e864c06_content_name",
+                "query": {
+                  "datasetName": "1d1a6fd3",
+                  "fields": [
+                    {
+                      "name": "content_name",
+                      "expression": "`content_name`"
+                    },
+                    {
+                      "name": "content_name_associativity",
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "content_name",
+                    "queryName": "dashboards/01f032912486139da7554b9400460604/datasets/01f07c1796d319cbbf1f9531e3c0ccc4_content_name"
+                  },
+                  {
+                    "fieldName": "content_name",
+                    "queryName": "dashboards/01f032912486139da7554b9400460604/datasets/01f09e26db6a1838a269202c7d8d8aa2_content_name"
+                  },
+                  {
+                    "fieldName": "content_name",
+                    "queryName": "dashboards/01f032912486139da7554b9400460604/datasets/01f07c1796d31a478ddd474d7e864c06_content_name"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Conteúdo"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 1,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_GLOBAL_FILTERS"
+    },
+    {
+      "name": "tag_page",
+      "displayName": "tag page",
+      "layout": [
+        {
+          "widget": {
+            "name": "tags",
+            "multilineTextboxSpec": {
+              "lines": [
+                "![imagem](https://picpay-principal.cloud.databricks.com/ajax-api/2.0/fs/files/Volumes/picpay/validation/dbfs/politica_performance/botao_aprovado.png) `Aprovado - Política de Performance`"
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "canvasBackgroundColor": {
+        "light": "#FFFFFF",
+        "dark": "#1F1E1D"
+      },
+      "widgetBackgroundColor": {
+        "light": "#FFFFFF",
+        "dark": "#1B1817"
+      },
+      "widgetBorderColor": {
+        "light": "#F1F1F1",
+        "dark": "#2F2E2B"
+      },
+      "fontColor": {
+        "light": "#000000",
+        "dark": "#FAFBF9"
+      },
+      "selectionColor": {
+        "light": "#5F7E52",
+        "dark": "#7A8F3E"
+      },
+      "visualizationColors": [
+        "#1A4F27",
+        "#B35900",
+        "#3A9BDC",
+        "#7A8F3E",
+        "#E8B200",
+        "#767676",
+        "#C23B22"
+      ],
+      "widgetHeaderAlignment": "LEFT"
+    },
+    "genieSpace": {
+      "isEnabled": false
+    }
+  }
+}
