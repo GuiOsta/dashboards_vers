@@ -481,121 +481,6 @@ export_google_sheets(url, tags_agg, "_base", "A1", "I20000", set_rows=True)
 
 # COMMAND ----------
 
-# DBTITLE 1,Histórico (Exp.)
-# Função para retornar o histórico de contatos do top 5 contatos de cada produto
-def get_top5_by_product(df_contatos, produto, dias, top=5):
-  # Top 5 tags nos últimos x dias
-  top5_product = (
-    df_contatos
-      .filter(  (F.col("product") == produto)
-              & (F.col("created_date") >= F.date_add(F.lit(max_dt_products), dias*-1))
-              & (F.col("created_date") <= F.lit(max_dt_products))
-              & (~F.lower(F.col("tag_column")).contains("em aberto")
-              & (F.col("tag_column") != produto)
-              & ~F.lower(F.col("tag_column")).contains("utilização")
-              )
-      )
-      .groupBy("tag_column")
-      .agg(F.sum("total_contacts").alias("qtd_contatos"))
-      .orderBy(F.desc("qtd_contatos"))
-      .limit(top)
-  )
-
-  # Usa o top para filtrar o histórico das tags
-  return (
-    df_contatos
-      .filter(F.col("created_date") <= F.lit(max_dt_products))
-      .join(top5_product, "tag_column", "inner")
-      .groupBy("created_month", "created_week", "created_date", "product", "tag_column")
-      .agg(F.sum("total_contacts").alias("qtd_contatos"))
-      .orderBy(F.desc("created_date"), F.desc("qtd_contatos"))
-  )
-
-# COMMAND ----------
-
-# DBTITLE 1,Monta a visão
-# picpay.self_service_analytics.all_contacts_classifications
-def tag_historical_evolution(dados_df):
-  # # Remove 'Sem identificação - Expurgado' from products list
-  # products_filtered = [product for product in products if product not in ('Sem identificação - Expurgado', 'Sem identificação')]
-  # Passa por cada produto mapeado e pega seu top 5 com base no range de dias informado e adiciona na lista
-  tops = []
-  for product in products: #_filtered:
-    print(product)
-    tops.append(get_top5_by_product(dados_df, product, 5))
-
-  # display(reduce(DataFrame.unionByName, tops))
-  # Une os dataframes da lista para formar um dataframe final
-  # top5_by_product = reduce(DataFrame.unionByName, tops).persist()
-  # Use unionAll instead of reduce and DataFrame.unionByName
-  top5_by_product = tops[0]
-  for df in tops[1:]:
-    top5_by_product = top5_by_product.unionAll(df).persist()
-
-  # Volume das tags por SEMANA
-  top5_tags_week = (
-    top5_by_product
-      .filter(F.col("created_date") >= semana_motivos)
-      .groupBy("product", "tag_column")
-      .pivot("created_week")
-      .sum("qtd_contatos")
-      .orderBy("product", F.col(semana_atual).desc())
-      .withColumn("ordem", F.row_number().over(Window.orderBy("product", F.col(semana_atual).desc())))
-  )
-
-  # Volume das tags por MÊS
-  top5_tags_month = (
-    top5_by_product
-      .groupBy("product", "tag_column")
-      .pivot("created_month")
-      .sum("qtd_contatos")
-      .drop("product")
-  )
-
-  # Consolidado semana + mês
-  view_top = (
-    top5_tags_week
-      .join(top5_tags_month, ["tag_column"], "left")
-      .join(df_ordem_apresentacao, "product", "left")
-      .orderBy("ordem_produto", "ordem", F.col(semana_atual).desc())
-      # .distinct()
-      .drop("ordem", "ordem_produto")
-  )
-
-  return view_top
-
-
-# Tickets
-dados_tickets = (
-  all_contacts_agg
-    .filter(
-        (F.col("contact_type") == "Ticket")
-      & (F.col("created_date") >= mes_comparacao_du)
-      & (F.col("first_queue_type") != 'D.Callink (voz)')
-    )
-  )
-
-# display(tag_historical_evolution(dados_tickets))
-view_tickets = tag_historical_evolution(dados_tickets).persist()
-export_google_sheets(url, view_tickets, "TKT - Motivos Var. Representatividade", "Q4", "AB24")
-print("Tickets - OK!")
-
-# Automatizado
-dados_automatizado = (
-  all_contacts_agg
-    # .filter("product <> 'Sem identificação - Expurgado'")
-    .filter(
-        (F.col("contact_type") == "Automatizado") 
-      & (F.col("created_date") >= mes_comparacao_du)
-      & (~F.col("tag_column").contains("Transferência FIS"))
-    )
-  )
-view_automatizado = tag_historical_evolution(dados_automatizado).persist()
-export_google_sheets(url, view_automatizado, "AUT - Motivos Var. Representatividade", "Q4", "AB24")
-print("Automatizado - OK!")
-
-# COMMAND ----------
-
 # DBTITLE 1,Volume total
 total_automatizado = (
   all_contacts_agg
@@ -624,17 +509,129 @@ export_google_sheets(url, total_tickets, "TKT - Motivos Var. Representatividade"
 
 # COMMAND ----------
 
+# DBTITLE 1,Função
+# Função para retornar o histórico de contatos do top 5 contatos de cada produto
+def tag_historical_evolution(dados_df, top=5):
+  # Retorna o Top 5 contatos com base nos últimos x dias
+  window_spec = Window.partitionBy("contact_type", "product").orderBy(F.desc("qtd_contatos"))
+
+   # Top 5 tags nos últimos x dias
+  top5_product = (
+    dados_df
+      .where((F.col("created_date").between(F.date_add(F.lit(max_dt_products), -5), F.lit(max_dt_products))))
+      .groupBy("contact_type", "product", "tag_column")
+      .agg(F.sum("total_contacts").alias("qtd_contatos"))
+      .withColumn("rank_contacts", F.row_number().over(window_spec))
+      .where(F.col("rank_contacts") <= 5)
+      .orderBy("contact_type", "product", F.desc("qtd_contatos"))
+      .select("contact_type", "tag_column", "qtd_contatos")
+  )
+
+  # Usa o top para filtrar o histórico das tags
+  top5_by_product = (
+    dados_df
+      .filter(F.col("created_date") <= F.lit(max_dt_products))
+      .join(top5_product, "tag_column", "inner")
+      .groupBy("created_month", "created_week", "created_date", "product", "tag_column")
+      .agg(F.sum("total_contacts").alias("qtd_contatos"))
+      .orderBy(F.desc("created_date"), F.desc("qtd_contatos"))
+  )
+
+
+  ####### Histórico do Top 5 por semana e mês ######
+  # Volume das tags por SEMANA
+  top5_tags_week = (
+    top5_by_product
+      .filter(F.col("created_date") >= semana_motivos)
+      .groupBy("product", "tag_column")
+      .pivot("created_week")
+      .sum("qtd_contatos")
+      .orderBy("product", F.col(semana_atual).desc())
+      .withColumn("ordem", F.row_number().over(Window.orderBy("product", F.col(semana_atual).desc())))
+  )
+
+  # Volume das tags por MÊS
+  top5_tags_month = (
+    top5_by_product
+      .withColumn("created_month", F.date_format(F.col("created_month"), "y-MM"))
+      .groupBy("product", "tag_column")
+      .pivot("created_month")
+      .sum("qtd_contatos")
+      .drop("product")
+  )
+
+  # Consolidado semana + mês
+  view_top = (
+    top5_tags_week
+      .join(top5_tags_month, ["tag_column"], "left")
+      .join(df_ordem_apresentacao, "product", "left")
+      .orderBy("ordem_produto", "ordem", F.col(semana_atual).desc())
+      # .distinct()
+      .drop("ordem", "ordem_produto")
+  )
+
+  return view_top
+
+# COMMAND ----------
+
+# DBTITLE 1,Monta a visão
+# Tickets
+dados_tickets = (
+  all_contacts_agg
+    .filter(
+        (F.col("contact_type") == "Ticket")
+      & (F.col("created_date") >= mes_comparacao_du)
+      & (F.col("first_queue_type") != 'D.Callink (voz)')
+      & (~F.col("product").like('%Consignado%'))
+    )
+  )
+
+view_tickets = tag_historical_evolution(dados_tickets).persist()
+export_google_sheets(url, view_tickets, "TKT - Motivos Var. Representatividade", "Q4", "AB24")
+print("Tickets - OK!")
+
+
+# Automatizado
+dados_automatizado = (
+  all_contacts_agg
+    .filter(
+        (F.col("contact_type") == "Automatizado") 
+      & (F.col("created_date") >= mes_comparacao_du)
+      & (~F.col("tag_column").contains("Transferência FIS"))
+      & (~F.col("product").like('%Consignado%'))
+    )
+  )
+
+view_automatizado = tag_historical_evolution(dados_automatizado).persist()
+export_google_sheets(url, view_automatizado, "AUT - Motivos Var. Representatividade", "Q4", "AB24")
+print("Automatizado - OK!")
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ### 2.3 Top Motivos Absolutos
 
 # COMMAND ----------
 
-# DBTITLE 1,Variação
+# DBTITLE 1,Funções
 # Adiciona linhas sem valor no dataframe de motivos de contato abs
-def add_lines_reason(produto, df, top):
-  if df.count() < top:
-    for i in range(top - df.count()):
-      values = [(produto, "", 0, 0, 0, 0, 0, 0, 0)]
+def add_lines_reason(df, top):
+  # Retorna os produtos que não completaram o top
+  lines_by_product = (
+      df.groupBy("product")
+        .agg(F.countDistinct("tag_column").alias("qtd_line"))
+        .filter(f"qtd_line < {top}")
+        .toPandas()
+    )
+
+  # Percorre cada produto para adicionar linhas em branco
+  for index, row in lines_by_product.iterrows():
+    product = row["product"]
+    lines = row["qtd_line"]
+
+    # Adição de linhas
+    for i in range(top - lines):
+      values = [(product, "", 0, 0, 0, 0, 0, 0, 0)]
 
       new_row = spark.createDataFrame(values, df.schema)
       df = df.union(new_row)
@@ -642,16 +639,17 @@ def add_lines_reason(produto, df, top):
   return df
 
 
-def get_variation(produto, df_contatos, top=5):
+def get_variation(df_contatos, top=5):
+  window_spec_neg = Window.partitionBy("product").orderBy("var_abs")
+  window_spec_pos = Window.partitionBy("product").orderBy(F.desc("var_abs"))
+
   # Todos os motivos de contato e suas variações absolutas da semana atual (prévia) - semana anterior
   df_var = (
     df_contatos
-      .filter(  (F.col("product") == produto)
-            & (~F.lower(F.col("tag_column")).contains("em aberto"))
+      .filter((~F.lower(F.col("tag_column")).contains("em aberto"))
             & (~F.lower(F.col("tag_column")).contains("utilização"))
             & (F.col("created_date") >= semana_motivos)
-            & (F.col("created_date") >= semana_motivos)
-            & (F.col("tag_column") != produto)
+            & (F.col("tag_column") != F.col("product"))
         )
       .groupBy("product", "tag_column")
       .pivot("created_week")
@@ -659,28 +657,25 @@ def get_variation(produto, df_contatos, top=5):
       .filter(~F.col(semana_atual).isNull())
       .withColumn(semana_anterior, F.when(F.col(semana_anterior).isNull(), F.lit(0)).otherwise(F.col(semana_anterior)))
       .withColumn("var_abs", F.col(semana_atual) - F.col(semana_anterior))
+      .withColumn("var_neg", F.row_number().over(window_spec_neg))
+      .withColumn("var_pos", F.row_number().over(window_spec_pos))
   )
 
   # Variações negativas (redução)
   var_neg = (
     df_var
-      .filter("var_abs <= 0")
-      .orderBy(F.col("var_abs"))
-      .limit(top)
+      .where((F.col("var_neg") <= top) & (F.col("var_abs") <= 0))
+      .drop(*["var_neg", "var_pos"])
   )
-  # Adiciona linhas até ter o necessário para completar o top
-  var_neg = add_lines_reason(produto, var_neg, top)
-
+  var_neg = add_lines_reason(var_neg, top).orderBy("product", "var_abs")
 
   # Variações positivas (aumento)
   var_pos = (
     df_var
-      .filter("var_abs > 0")
-      .orderBy(F.col("var_abs").desc())
-      .limit(top)
+      .where((F.col("var_pos") <= top) & (F.col("var_abs") > 0))
+      .drop(*["var_neg", "var_pos"])
   )
-  # Adiciona linhas até ter o necessário para completar o top
-  var_pos = add_lines_reason(produto, var_pos, top)
+  var_pos = add_lines_reason(var_pos, top).orderBy("product", F.desc("var_abs"))
 
 
   # Dataframe com o top completo
@@ -690,34 +685,19 @@ def get_variation(produto, df_contatos, top=5):
   return (
     df_var_abs
       .withColumn("ordem", F.monotonically_increasing_id()+1)
+      .orderBy("product", "ordem")
+      .withColumn("ordem", F.monotonically_increasing_id()+1)
   )
 
-# COMMAND ----------
 
-# DBTITLE 1,Monta a visão
-def tag_historical_evolution_abs(df_contatos, lst_products):
-  # Passa por cada produto mapeado e pega seu top baseado nas variação de semana
-  tops = []
-
-  for product in lst_products:
-    print(product)
-    tops.append(get_variation(product, df_contatos))
-
-  # display(reduce(DataFrame.unionByName, tops))
-  # Une os dataframes da lista para formar um dataframe final
-  # top5_by_product = reduce(DataFrame.unionByName, tops).persist()
-  # Use unionAll instead of reduce and DataFrame.unionByName
-  top5_by_product = tops[0]
-  for df in tops[1:]:
-    top5_by_product = top5_by_product.unionAll(df).persist()
-
-  # Assign top5_by_product to top_variation_week
-  top_variation_week = top5_by_product
-
+def tag_historical_evolution_abs(df_contatos):
+  # Retorna a evolução semanal das tags de acordo com o top 5  
+  top_variation_week = get_variation(df_contatos, top=5)
 
   # Total dos meses
   reason_month = (
     df_contatos
+      .withColumn("created_month", F.date_format(F.col("created_month"), "y-MM"))
       .filter(F.col("created_date") >= mes_comparacao_du)
       .groupBy("tag_column")
       .pivot("created_month")
@@ -735,10 +715,9 @@ def tag_historical_evolution_abs(df_contatos, lst_products):
 
   return final_top
 
+# COMMAND ----------
 
-lst_products = products.copy()
-lst_products.remove('Sem identificação') # descomentar se der problema
-
+# DBTITLE 1,Monta a visão
 # Tickets
 dados_tickets = (
   all_contacts_agg
@@ -746,10 +725,13 @@ dados_tickets = (
         (F.col("contact_type") == "Ticket")
       & (F.col("created_date") >= mes_comparacao_du)
       & (F.col("first_queue_type") != 'D.Callink (voz)')
+      & (~F.col("product").like('%Consignado%'))
     )
   )
-# view_tickets_abs = tag_historical_evolution_abs(dados_tickets, lst_products)
-# export_google_sheets(url, view_tickets_abs, "TKT - Motivos Var. Absoluta", "Q4", "AC72")
+
+view_tickets_abs = tag_historical_evolution_abs(dados_tickets)
+export_google_sheets(url, view_tickets_abs, "TKT - Motivos Var. Absoluta", "Q52", "AC122")
+print("Tickets - OK!")
 
 
 # Automatizado
@@ -759,11 +741,13 @@ dados_automatizado = (
         (F.col("contact_type") == "Automatizado")
       & (F.col("created_date") >= mes_comparacao_du)
       & (~F.col("tag_column").contains("Transferência FIS"))
+      & (~F.col("product").like('%Consignado%'))
     )
   )
-view_automatizado_abs = tag_historical_evolution_abs(dados_automatizado, lst_products)
-export_google_sheets(url, view_automatizado_abs, "AUT - Motivos Var. Absoluta", "Q52", "AC122")
 
+view_automatizado_abs = tag_historical_evolution_abs(dados_automatizado)
+export_google_sheets(url, view_automatizado_abs, "AUT - Motivos Var. Absoluta", "Q52", "AC122")
+print("Automatizado - OK!")
 
 # COMMAND ----------
 
@@ -772,7 +756,6 @@ export_google_sheets(url, view_automatizado_abs, "AUT - Motivos Var. Absoluta", 
 
 # COMMAND ----------
 
-# DBTITLE 1,NPS FS
 nps_fs_new = spark.sql("""
   select
     answer_month,
